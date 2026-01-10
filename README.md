@@ -1,38 +1,31 @@
-# sv
+# cryolabside-vscode README
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+CryolabsIDE is an IDE made by students for students. It is the successor of a project called SchoolNestIDE (currently private).
+## Features
 
-## Creating a project
+- More stability compared to SchoolNestIDE
+- Better project management inside of the IDE. 
+- V86 Emulator to run serious workflows relying on compilation and execution with speed like QEMU TCG.
+- Java support.
+- Simplified VSCode UI for students with zero coding experience
+- Auto-generated run configs and more...
+- Faster performance due to not using React or virtual DOM.
+(TODO) add images.
 
-If you're seeing this, you've probably already done this step. Congrats!
+## Requirements
 
-```sh
-# create a new project in the current directory
-npx sv create
+- In order to build this IDE, you must have NodeJS installed along with docker, rust, llvm clang, and make.
 
-# create a new project in my-app
-npx sv create my-app
-```
+## Extension Settings
 
-## Developing
+No configuration is needed for this IDE. This extends off of vscode.
+## Known Issues
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+- Filesystem may corrupt if the user clears site data during a write in the filesystem.
+- No git,lti,or other support yet...
 
-```sh
-npm run dev
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
+## Release Notes
 
-## Building
+Currently in development...
 
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
