@@ -7,13 +7,10 @@
     import TooltipTrigger from '$lib/components/ui/tooltip/tooltip-trigger.svelte';
     import Tooltip from '$lib/components/ui/tooltip/tooltip.svelte';
     import { type Component } from 'svelte';
-    type PanelItem = {
-        id: string,
-        tooltip: string,
-        Icon: Component,
-        clickable: boolean
-    };
-    let items: PanelItem[] = [
+    import type { SidePanelItem } from '$lib/components/base/panel/SidePanelItem';
+    import SidePanel from '$lib/components/base/panel/SidePanel.svelte';
+    
+    let items: SidePanelItem[] = [
         {
             id: "main-menu",
             Icon: BookIcon,
@@ -29,24 +26,13 @@
     ];
 </script>
 
-{#snippet ItemPanelItem(it: PanelItem)}
-    <Tooltip>
-        <TooltipTrigger>
-            <it.Icon></it.Icon>
-        </TooltipTrigger>
-        <TooltipContent>
-            {it.tooltip}
-        </TooltipContent>
-    </Tooltip>
-{/snippet}
+
 <div class="w-full h-full flex flex-row ">
     
-    <div class="w-[50pt] h-full bg-gray ">
-        <ItemPanel items={[...items]} Comp={ItemPanelItem} selected="main-menu"></ItemPanel>
+    <div class="w-[20%] h-full bg-gray ">
+        <SidePanel {items}></SidePanel>
     </div>
-    <div class="w-[20%]  h-full bg-gray-700 ">
 
-    </div>
     <div class="w-full  h-full bg-card">
 
     </div>
