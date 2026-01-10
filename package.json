@@ -39,6 +39,9 @@
 		"vite": "^7.2.6"
 	},
 	"dependencies": {
+		"@zenfs/core": "^2.4.4",
+		"filer": "^1.4.1",
+		"localforage": "^1.10.0",
 		"svelte-dnd-action": "^0.9.69"
 	}
 }
