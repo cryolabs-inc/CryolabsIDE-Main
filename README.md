@@ -16,9 +16,6 @@ CryolabsIDE is an IDE made by students for students. It is the successor of a pr
 
 - In order to build this IDE, you must have NodeJS installed along with docker, rust, llvm clang, and make.
 
-## Extension Settings
-
-No configuration is needed for this IDE. This extends off of vscode.
 ## Known Issues
 
 - Filesystem may corrupt if the user clears site data during a write in the filesystem.
