@@ -6,12 +6,13 @@
     import DraggbleItemList from "../items/DraggbleItemList.svelte";
     import type { SidePanelItem } from "./SidePanelItem";
 
-    let { items = $bindable(), selected=$bindable(""), dndZoneProps= {type: `fj-side-panel-${crypto.randomUUID()}`}}: { items: SidePanelItem<unknown>[], selected?: string, dndZoneProps?: Partial<Options> } = $props();
+    let { items = $bindable(), selected=$bindable(""), dndZoneProps= {type: `fj-side-panel-${crypto.randomUUID()}`}}: { items: SidePanelItem<unknown>[], selected?: string, dndZoneProps?: Partial<Options<SidePanelItem<unknown>>> } = $props();
     let selectedItem = $derived(items.filter(v=>v.id===selected)[0]);
     
 </script>
 
 {#snippet SidePanelRenderer<T>(item: SidePanelItem<T>)}
+    <div class="p-5">
     <Tooltip>
         <TooltipTrigger>
             <item.Icon></item.Icon>
@@ -20,6 +21,7 @@
             {item.tooltip}
         </TooltipContent>
     </Tooltip>
+    </div>
 {/snippet}
 <div class="w-full h-full flex flex-row ">
     <div class="flex-1 bg-accent/50 ">

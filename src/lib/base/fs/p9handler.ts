@@ -1,0 +1,695 @@
+import { FileHandle } from '@zenfs/core/node/promises.js';
+import { Marshall, Unmarshall } from '../struct';
+import { Inode, type Dir, type Dirent } from '@zenfs/core';
+import { fs, webfs } from '.';
+
+import * as p from 'path';
+import { S_IFDIR, S_IFMT } from '@zenfs/core/constants.js';
+import { Errno, Exception, withErrno } from 'kerium';
+import { DirType } from '@zenfs/core/vfs/dir.js';
+enum p9_qid_t {
+    P9_QTDIR = 0x80,
+    P9_QTAPPEND = 0x40,
+    P9_QTEXCL = 0x20,
+    P9_QTMOUNT = 0x10,
+    P9_QTAUTH = 0x08,
+    P9_QTTMP = 0x04,
+    P9_QTSYMLINK = 0x02,
+    P9_QTLINK = 0x01,
+    P9_QTFILE = 0x00,
+};
+const P9_SETATTR_MODE = 0x00000001;
+const P9_SETATTR_UID = 0x00000002;
+const P9_SETATTR_GID = 0x00000004;
+const P9_SETATTR_SIZE = 0x00000008;
+const P9_SETATTR_ATIME = 0x00000010;
+const P9_SETATTR_MTIME = 0x00000020;
+const P9_SETATTR_CTIME = 0x00000040;
+const P9_SETATTR_ATIME_SET = 0x00000080;
+const P9_SETATTR_MTIME_SET = 0x00000100;
+const {
+    P9_QTAPPEND,
+    P9_QTAUTH,
+    P9_QTDIR,
+    P9_QTEXCL,
+    P9_QTFILE,
+    P9_QTLINK,
+    P9_QTMOUNT,
+    P9_QTSYMLINK,
+    P9_QTTMP
+} = p9_qid_t;
+enum p9_msg_t {
+    P9_TLERROR = 6,
+    P9_RLERROR,
+    P9_TSTATFS = 8,
+    P9_RSTATFS,
+    P9_TLOPEN = 12,
+    P9_RLOPEN,
+    P9_TLCREATE = 14,
+    P9_RLCREATE,
+    P9_TSYMLINK = 16,
+    P9_RSYMLINK,
+    P9_TMKNOD = 18,
+    P9_RMKNOD,
+    P9_TRENAME = 20,
+    P9_RRENAME,
+    P9_TREADLINK = 22,
+    P9_RREADLINK,
+    P9_TGETATTR = 24,
+    P9_RGETATTR,
+    P9_TSETATTR = 26,
+    P9_RSETATTR,
+    P9_TXATTRWALK = 30,
+    P9_RXATTRWALK,
+    P9_TXATTRCREATE = 32,
+    P9_RXATTRCREATE,
+    P9_TREADDIR = 40,
+    P9_RREADDIR,
+    P9_TFSYNC = 50,
+    P9_RFSYNC,
+    P9_TLOCK = 52,
+    P9_RLOCK,
+    P9_TGETLOCK = 54,
+    P9_RGETLOCK,
+    P9_TLINK = 70,
+    P9_RLINK,
+    P9_TMKDIR = 72,
+    P9_RMKDIR,
+    P9_TRENAMEAT = 74,
+    P9_RRENAMEAT,
+    P9_TUNLINKAT = 76,
+    P9_RUNLINKAT,
+    P9_TVERSION = 100,
+    P9_RVERSION,
+    P9_TAUTH = 102,
+    P9_RAUTH,
+    P9_TATTACH = 104,
+    P9_RATTACH,
+    P9_TERROR = 106,
+    P9_RERROR,
+    P9_TFLUSH = 108,
+    P9_RFLUSH,
+    P9_TWALK = 110,
+    P9_RWALK,
+    P9_TOPEN = 112,
+    P9_ROPEN,
+    P9_TCREATE = 114,
+    P9_RCREATE,
+    P9_TREAD = 116,
+    P9_RREAD,
+    P9_TWRITE = 118,
+    P9_RWRITE,
+    P9_TCLUNK = 120,
+    P9_RCLUNK,
+    P9_TREMOVE = 122,
+    P9_RREMOVE,
+    P9_TSTAT = 124,
+    P9_RSTAT,
+    P9_TWSTAT = 126,
+    P9_RWSTAT,
+};
+
+interface Qid { type: number, version: number, path: bigint };
+interface QidWithPath extends Qid { pathId: string };
+class FidInfo implements Qid {
+    type: number = 0;
+    version: number = 0;
+    path: bigint = 0n;
+    pathId: string = "";
+    handle?: Dir | FileHandle;
+    fs: typeof import('@zenfs/core').fs.promises;
+    parentHandle: FidInfo | null = null;
+    buffer: Uint8Array = new Uint8Array();
+    async moveTo(oldName: string, newDfid: FidInfo, newName: string) {
+        await this.fs.rename(p.resolve(this.pathId, oldName), p.resolve(newDfid.pathId, newName));
+    }
+    async link(name: string, toPath: string) {
+
+        await this.fs.link(p.resolve(this.pathId, name), toPath);
+    }
+    async truncate(nwSize: number) {
+        await this.fs.truncate(this.pathId, nwSize);
+    }
+    async utime(newMtime: bigint, newAtime: bigint) {
+        await this.fs.utimes(this.pathId, Number(newAtime), Number(newMtime));
+    }
+    async chown(uid: number, gid: number) {
+        await this.fs.chown(this.pathId, uid, gid);
+    }
+    async chmod(nwMode: number) {
+        await this.fs.chmod(this.pathId, nwMode);
+    }
+    constructor(fs: typeof import('@zenfs/core').fs.promises, {
+        version, path, pathId, type
+    }: QidWithPath, parentHandle: FidInfo | null = null) {
+        this.type = type;
+        this.version = version;
+        this.path = path;
+        this.fs = fs;
+        this.pathId = pathId;
+        this.parentHandle = parentHandle;
+
+    }
+    async readlink() {
+        return await this.fs.readlink(this.pathId);
+    }
+    async symlink(name: string, tgt: string) {
+        await this.fs.symlink(p.resolve(this.pathId, name), tgt);
+        return this.walk(name);
+    }
+    async mknod(name: string) {
+        throw withErrno('ENOTSUP', "Mknod() is not supported.")
+    }
+    async mkdir(name: string, mode: number, gid: number) {
+        await this.fs.mkdir(p.resolve(this.pathId, name), {mode});
+        await this.fs.chown(p.resolve(this.pathId, name), 0, gid);
+    }
+    async open(mode: number) {
+        let { fs } = this;
+        if (this.type & P9_QTDIR) {
+            this.handle = await fs.opendir(this.pathId);
+            let ad = await Array.fromAsync(this.handle);
+
+            let infos = ad.map(v => {
+                return {
+                    type: v.type,
+                    name: v.name
+                };
+            });
+            infos.push({ name: "..", type: DirType.DIR });
+            infos.push({ name: ".", type: DirType.DIR });
+
+            let totalSize = infos.reduce((prevVal, curVal, idx) => {
+                return curVal.name.length + 2 + 1 + 8 + 13 + prevVal;
+            }, 0);
+            let u8 = new Uint8Array(totalSize);
+            let off = 0;
+
+            for (let { name, type } of infos) {
+                let entSize = name.length + 2 + 1 + 8 + 13;
+                u8.set(Marshall({
+                    qid: ["u8array", fmtQid(await this.walk(name))],
+                    offset: ["u64", BigInt(off + entSize)],
+                    type: ['u8', type],
+                    nameLen: ['u16', name.length],
+                    name: ["s", name]
+                }), off);
+                off += entSize;
+            }
+            this.buffer = u8;
+        } else {
+            this.handle = await fs.open(this.pathId, mode);
+
+        }
+
+    }
+    async stat() {
+
+        return await this.fs.stat(this.pathId, { bigint: true });
+    }
+    async unlink(name: string) {
+        let statsInfo = await this.fs.stat(p.resolve(this.pathId, name));
+        if (statsInfo.isDirectory()) {
+            await this.fs.rmdir(p.resolve(this.pathId, name));
+        }else {
+            await this.fs.unlink(p.resolve(this.pathId, name));
+        }
+    }
+    async clunk() {
+        await this.handle?.close();
+    }
+    async walk(name: string) {
+        let { fs } = this;
+        let npId = p.resolve(this.pathId, name);
+        let stats = await fs.stat(npId); // exception will be thrown if it does nto exist!
+        let qid: QidWithPath = {
+            type: 0,
+            version: 0,
+            pathId: npId,
+            path: BigInt(stats.ino)
+        };
+
+
+        if ((stats.mode & S_IFMT) === S_IFDIR) {
+            qid.type = P9_QTDIR;
+        }
+        qid.version = 0;
+        return new FidInfo(this.fs, qid, this);
+    }
+
+
+    async write(data: Uint8Array, position: number) {
+        if (!this.handle) {
+            throw withErrno("EBADF", "Tried to write without preparing for I/O with open()");
+        }
+        if (!(this.handle instanceof FileHandle)) {
+            throw withErrno("EISDIR", "Tried to write data to a directory");
+        }
+        await this.handle.write(data, { position });
+
+    }
+    async sync() {
+        // no sync needed.
+    }
+    async read(position: number, length: number, buffer: Uint8Array): Promise<number> {
+        if (this.handle instanceof FileHandle) {
+            return (await this.handle.read(buffer, 0, length, position)).bytesRead;
+        }
+        else {
+            let readFrom =this.buffer.subarray(position, Math.min(this.buffer.length, position + length));
+            buffer.set(readFrom);
+            return readFrom.length;
+        }
+    }
+    async create(name: string, mode: number) {
+        let { fs } = this;
+        await fs.writeFile(p.resolve(this.pathId, name), "");
+        await fs.chmod(name, mode);
+        return await this.walk(name);
+    }
+    getHandle() {
+        return this.handle;
+    }
+    asQid(): Qid {
+        let { path, version, type } = this;
+        return { path, version, type };
+    }
+}
+function fmtQid(qid: Qid) {
+    return Marshall({
+        type: ['u8', qid.type],
+        version: ['u32', qid.type],
+        path: ["u64", qid.path]
+    });
+}
+async function getRootFidInfo(fs: typeof import('@zenfs/core').fs.promises) {
+    let fa = await fs.stat('/');
+
+    let fidInfo = new FidInfo(fs, { type: P9_QTDIR, pathId: "/", path: BigInt(fa.ino), version: 0 }, null);
+    return fidInfo;
+
+}
+
+function getHandler() {
+    let fids: Record<number, FidInfo> = {};
+    let tagsFlushed: Set<number> = new Set();
+    
+    function QidToU8Arr({
+        type, version, path
+    }: { type: number, version: number, path: bigint }) {
+        return Marshall({
+            type: ["u8", type],
+            version: ["u32", version],
+            path: ["u64", path]
+        });
+    }
+
+    async function p9handler({ promises: fs }: typeof import('.').fs, request: Uint8Array, respond: (response: Uint8Array) => void) {
+
+        let [off, { tag, length, method }] = Unmarshall(request, {
+            "length": ["u32"],
+            "method": ["u8"],
+            tag: ["u16"]
+        });
+        let [, { msgbytes }] = Unmarshall(request, { msgbytes: ["u8array", length - 4 - 1 - 2] }, { byteOffset: off })
+        let methodSpecific: Uint8Array | null = null;
+        let methodNum = method as p9_msg_t;
+
+        let retMethod = method + 1;
+
+        try {
+            switch (methodNum) {
+                // statfs
+                case p9_msg_t.P9_TLERROR: {
+                    throw new Error("Should not receive this.");
+                }
+                case p9_msg_t.P9_TSTATFS: {
+                    let stats = await fs.statfs('/');
+                    methodSpecific = Marshall({
+                        type: ["u32", stats.type],
+                        bsize: ['u64', BigInt(Math.floor(stats.bsize))],
+                        blocks: ['u64', BigInt(Math.floor(stats.blocks))],
+                        bfree: ['u64', BigInt(Math.floor(stats.bfree))],
+                        bavail: ['u64', BigInt(Math.floor(stats.bavail))],
+                        files: ["u64", BigInt(Math.floor(stats.files))],
+                        ffree: ["u64", BigInt(Math.floor(stats.ffree))],
+                        fsid: ["u64", 0n],
+                        namelen: ['u32', 255]
+                    });
+                    break;
+                }
+                case p9_msg_t.P9_TLOPEN: {
+                    let [, { fid, flags }] = Unmarshall(msgbytes, {
+                        fid: ['u32'],
+                        flags: ['u32']
+                    });
+                    let fidInfo = fids[fid];
+                    if (!fidInfo) {
+                        throw withErrno("EINVAL");
+                    }
+                    await fidInfo.open(flags);
+                    let qid = fidInfo.asQid();
+
+                    methodSpecific = Marshall({
+                        type: ["u8", qid.type],
+                        version: ["u32", qid.version],
+                        path: ["u64", qid.path]
+                    });
+                    break;
+
+                }
+                case p9_msg_t.P9_TLCREATE: {
+                    let [, { fid, name, mode }] = Unmarshall(msgbytes, {
+                        fid: ["u32"],
+                        name: ["sl"],
+                        flags: ["u32"],
+                        mode: ["u32"],
+                        gid: ["u32"]
+                    });
+                    let pFid = fids[fid];
+                    let newQid = await pFid.create(name, mode);
+                    methodSpecific = Marshall({
+                        qid: ["u8array", fmtQid(newQid)],
+                        iounit: ["u32", 1024 * 1024]
+                    });
+                    break;
+                }
+                case p9_msg_t.P9_TSYMLINK: {
+                    let [, { fid, name, symtgt }] = Unmarshall(msgbytes, {
+                        fid: ["u32"],
+                        name: ["sl"],
+                        symtgt: ["sl"]
+                    });
+                    let f = fids[fid];
+                    methodSpecific = fmtQid(await f.symlink(name, symtgt));
+
+                    break;
+                }
+                case p9_msg_t.P9_TMKNOD: {
+                    throw withErrno("ENOTSUP", "mknod not supported.");
+                }
+                case p9_msg_t.P9_TRENAME: {
+                    throw withErrno("ENOTSUP", "old rename not supported");
+                }
+                case p9_msg_t.P9_TREADLINK: {
+                    let [, { f }] = Unmarshall(msgbytes, { f: ["u32"] });
+                    let fidInf = fids[f];
+                    methodSpecific = Marshall({ s: ["sl", await fidInf.readlink()] });
+                    break;
+                }
+                case p9_msg_t.P9_TGETATTR: {
+                    let [, { fid, requestMask }] = Unmarshall(msgbytes, { fid: ["u32"], requestMask: ["u64"] });
+                    //     size[4] Rgetattr tag[2] valid[8] qid[13] mode[4] uid[4] gid[4] nlink[8]
+                    //  rdev[8] size[8] blksize[8] blocks[8]
+                    //  atime_sec[8] atime_nsec[8] mtime_sec[8] mtime_nsec[8]
+                    //  ctime_sec[8] ctime_nsec[8] btime_sec[8] btime_nsec[8]
+                    //  gen[8] data_version[8]
+                    let mfid = fids[fid];
+                    let st = await mfid.stat();
+                    methodSpecific = Marshall({
+                        valid: ["u64", requestMask],
+                        qid: ["u8array", fmtQid(mfid)],
+                        mode: ["u32", Number(st.mode)],
+                        uid: ["u32", Number(st.uid)],
+                        gid: ["u32", Number(st.gid)],
+                        nlink: ["u64", st.nlink],
+                        rdev: ["u64", st.rdev],
+                        size: ["u64", st.size],
+                        blksize: ["u64", st.blksize],
+                        blocks: ["u64", st.blocks],
+                        atime_sec: ['u64', st.atimeMs / 1000n],
+                        atime_nsec: ['u64', st.atimeNs],
+                        mtime_sec: ['u64', st.mtimeMs / 1000n],
+                        mtime_nsec: ["u64", st.mtimeNs],
+                        ctim_sec: ["u64", st.ctimeMs / 1000n],
+                        ctime_ns: ['u64', st.ctimeNs],
+                        btime_sec: ["u64", st.birthtimeMs / 1000n],
+                        btim_ns: ["u64", st.birthtimeNs],
+                        gen: ["u64", 0n],
+                        data_version: ["u64", 0n]
+                    });
+                    break;
+                }
+                case p9_msg_t.P9_TSETATTR: {
+                    //     tag[2] fid[4] valid[4] mode[4] uid[4] gid[4] size[8]
+                    //  atime_sec[8] atime_nsec[8] mtime_sec[8] mtime_nsec[8]
+                    let [, { fid, valid, mode, uid, gid, size, atime_sec, atime_nsec, mtime_sec, mtime_nsec }] = Unmarshall(msgbytes, {
+                        fid: ['u32'],
+                        valid: ['u32'],
+                        mode: ["u32"],
+                        uid: ["u32"],
+                        gid: ["u32"],
+                        size: ["u64"],
+                        atime_sec: ["u64"],
+                        atime_nsec: ["u64"],
+                        mtime_sec: ["u64"],
+                        mtime_nsec: ["u64"]
+                    });
+                    let f = fids[fid];
+                    if (valid & P9_SETATTR_MODE) {
+                        await f.chmod(valid);
+                    }
+                    if ((valid & P9_SETATTR_UID) && (valid & P9_SETATTR_GID)) {
+                        await f.chown(uid, gid);
+                    }
+                    let req = [valid];
+                    let mtime = 0n, atime = 0n;
+                    let now = BigInt(Date.now());
+                    if (req[1] & P9_SETATTR_ATIME) {
+                        atime = now;
+                    }
+                    if (req[1] & P9_SETATTR_MTIME) {
+                        mtime = now;
+                    }
+                    if (req[1] & P9_SETATTR_CTIME) {
+                    }
+                    if (req[1] & P9_SETATTR_ATIME_SET) {
+                        atime = atime_sec * 1000n; // assuming it will be sec, convert to ms
+                    }
+                    if (req[1] & P9_SETATTR_MTIME_SET) {
+                        mtime = mtime_sec * 1000n; // assuming it will be sec, convert to ms
+                    }
+                    if (atime || mtime) {
+                        await f.utime(mtime, atime);
+                    }
+                    if (valid & P9_SETATTR_SIZE) {
+                        await f.truncate(Number(size));
+                    }
+                    // done.
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                
+
+                case p9_msg_t.P9_TREADDIR: {
+                    let [, {fid, offset, count}] = Unmarshall(msgbytes, {fid: ["u32"], offset: ["u64"], count: ["u32"]});
+                    let f = fids[fid];
+                    let dat = new Uint8Array(count);
+                    let numRead = await f.read(Number(offset), count, dat);
+                    methodSpecific = Marshall({
+                        count: ["u32", numRead],
+                        dat: ['u8array', dat]
+                    });
+                    break;
+                }
+                case p9_msg_t.P9_TFSYNC: {
+                    let [, {fid, datasync}] = Unmarshall(msgbytes,{fid: ['u32'], datasync:['u32']});
+                    let f = fids[fid];
+                    await f.sync();
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                case p9_msg_t.P9_TLOCK: {
+                    // unimplemented messages get an exception
+                    break;
+                }
+                case p9_msg_t.P9_RLOCK: {
+                    break;
+                }
+                case p9_msg_t.P9_TGETLOCK: {
+                    break;
+                }
+                case p9_msg_t.P9_RGETLOCK: {
+                    break;
+                }
+                case p9_msg_t.P9_TLINK: {
+                    let [, {dfid, fid, name}] = Unmarshall(msgbytes, {dfid: ["u32"], fid: ["u32"], name: ['sl']});
+                    let parentFid = fids[dfid];
+                    let refedFid = fids[fid];
+                    await parentFid.link(name, refedFid.pathId);
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                case p9_msg_t.P9_TMKDIR: {
+                    let [, {dfid, name, mode, gid}] = Unmarshall(msgbytes, {dfid: ["u32"], name: ["sl"], mode: ["u32"], gid: ["u32"]});
+                    let parentFid = fids[dfid];
+                    await parentFid.mkdir(name, mode, gid);
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                case p9_msg_t.P9_TRENAMEAT: {
+                    //  olddirfid[4] oldname[s] newdirfid[4] newname[s]
+                    let [,{olddirfid, oldname, newdirfid, nwname}] = Unmarshall(msgbytes, {olddirfid: ["u32"], oldname: ["sl"], newdirfid: ["u32"], nwname: ["sl"]});
+                    let oldParent = fids[olddirfid];
+                    let newParent = fids[newdirfid];
+                    methodSpecific = new Uint8Array()
+
+                    if (oldParent === newParent) {
+                        break;
+                    }
+                    await oldParent.moveTo(oldname, newParent, nwname);
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                case p9_msg_t.P9_TUNLINKAT: {
+                    // dirfd[4] name[s] flags[4]
+                    let [, {dirfd, name, flags}] = Unmarshall(msgbytes, {
+                        dirfd: ["u32"],
+                        name: ["sl"],
+                        flags: ["u32"]
+                    });
+                    // brother
+
+                    let d = fids[dirfd];
+                    await d.unlink(name);
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                case p9_msg_t.P9_TVERSION: {
+                    let [, {msize, version}] = Unmarshall(msgbytes, {
+                        msize: ["u32"],
+                        version: ["sl"]
+                    });
+                    methodSpecific = Marshall({
+                        msize: ["u32", 2 * 1024 * 1024 * 1024],
+                        version: ["sl", "9P2000.L"]
+                    });
+                    break;
+                }
+
+                case p9_msg_t.P9_TAUTH: {
+                    throw withErrno("ENOTSUP", "Authentication is not required.");
+                }
+                case p9_msg_t.P9_TATTACH: {
+                    // fid[4] afid[4] uname[s] aname[s] n_uname[4]
+                    let [, {fid, afid, uname, aname, n_uname}] = Unmarshall(msgbytes, {
+                        fid: ["u32"],
+                        afid: ["u32"],
+                       uname: ["sl"],
+                       aname: ["sl"] ,
+                       n_uname: ["u32"]
+                    });
+                    console.info(`[INFO] 9p session established for ${uname}`);
+                    fids[fid] = await getRootFidInfo(fs);
+                    methodSpecific = fmtQid(fids[fid].asQid());
+                    break;
+                }
+                case p9_msg_t.P9_TERROR: {
+                    throw withErrno("ENOTSUP", "terror should not happen.");
+                }
+                case p9_msg_t.P9_TFLUSH: {
+                    tagsFlushed.add(tag);
+                    methodSpecific = new Uint8Array();
+                    break;
+                }
+                case p9_msg_t.P9_RFLUSH: {
+                    break;
+                }
+                case p9_msg_t.P9_TWALK: {
+                    break;
+                }
+                case p9_msg_t.P9_RWALK: {
+                    break;
+                }
+                case p9_msg_t.P9_TOPEN: {
+                    break;
+                }
+                case p9_msg_t.P9_ROPEN: {
+                    break;
+                }
+                case p9_msg_t.P9_TCREATE: {
+                    break;
+                }
+                case p9_msg_t.P9_RCREATE: {
+                    break;
+                }
+                case p9_msg_t.P9_TREAD: {
+                    break;
+                }
+                case p9_msg_t.P9_RREAD: {
+                    break;
+                }
+                case p9_msg_t.P9_TWRITE: {
+                    break;
+                }
+                case p9_msg_t.P9_RWRITE: {
+                    break;
+                }
+                case p9_msg_t.P9_TCLUNK: {
+                    break;
+                }
+                case p9_msg_t.P9_RCLUNK: {
+                    break;
+                }
+                case p9_msg_t.P9_TREMOVE: {
+                    break;
+                }
+                case p9_msg_t.P9_RREMOVE: {
+                    break;
+                }
+                case p9_msg_t.P9_TSTAT: {
+                    break;
+                }
+                case p9_msg_t.P9_RSTAT: {
+                    break;
+                }
+                case p9_msg_t.P9_TWSTAT: {
+                    break;
+                }
+                case p9_msg_t.P9_RWSTAT: {
+                    break;
+                }
+            }
+            if (!methodSpecific) {
+                throw withErrno("ENOTSUP", "no method handled this message");
+            }
+            if (tagsFlushed.has(tag)) {
+                tagsFlushed.delete(tag);
+                return;
+            }
+            let retMethod = methodNum + 1;
+            let retBuffer = Marshall({
+                method: ["u16", retMethod],
+                tag: ["u16", tag],
+                dat: ["u8array", methodSpecific]
+            });
+            let buf = Marshall({
+                length: ["u32", retBuffer.length + 4],
+                dat: ['u8array', retBuffer]
+            });
+            respond(buf);
+            return;
+        } catch (e) {
+            if (e instanceof Exception) {
+                let errNum = e.errno;
+                let dat = Marshall({
+                    method: ["u16", p9_msg_t.P9_RLERROR],
+                    tag: ["u16", tag],
+                    ecode: ["u32", errNum]
+
+                });
+                let ret = Marshall({
+                    length: ["u32", dat.byteLength + 4],
+                    data: ["u8array", dat]
+                });
+                respond(ret);
+                return;
+            } else {
+                // rethrow
+                throw e;
+            }
+
+        }
+    }
+    return p9handler;
+}
