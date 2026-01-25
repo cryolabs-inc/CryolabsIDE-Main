@@ -40,7 +40,7 @@ type a<T extends unknown[]> = Extract<Resource<T>,ResourceMember<T, "data">>;
 // --- Response class ---
 type TheExtracted<T, K extends keyof Rmap<unknown[]>> = T extends Rmap<infer params> ? Rmap<params>[K] : never;
 
-type ToResource = <K extends keyof Rmap<T>, T extends unknown[] = []>(type: K, val: TheExtracted<Rmap<T>, K>)=>ResourceMember<T, K>
+type ToResource = <T extends unknown[], K extends keyof Rmap<T> >(type: K, val: Rmap<T>[K])=>ResourceMember<T, K>
 
 const toResource: ToResource = (type, dat)=>{
     return{
@@ -90,7 +90,7 @@ export class ResourceResponse<T extends any[] = any[], R = Resource<T>> {
     }
 
     static ok<R extends unknown[], K extends keyof Rmap<R>>(type: K, resource: TheExtracted<Rmap<R>, K>): ResourceResponse<R> {
-        return new ResourceResponse<R>(200, "OK", { resource: toResource<K, R>(type, resource) as Resource<R>});
+        return new ResourceResponse<R>(200, "OK", { resource: toResource<R, K>(type, resource) as Resource<R>});
     }
     
 }
