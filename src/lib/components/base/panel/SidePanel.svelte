@@ -5,6 +5,7 @@
     import type { Options } from "svelte-dnd-action";
     import DraggbleItemList from "../items/DraggbleItemList.svelte";
     import type { SidePanelItem } from "./SidePanelItem";
+    import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
 
     let { items = $bindable(), selected=$bindable(""), dndZoneProps= {type: `fj-side-panel-${crypto.randomUUID()}`}}: { items: SidePanelItem<unknown>[], selected?: string, dndZoneProps?: Partial<Options<SidePanelItem<unknown>>> } = $props();
     let selectedItem = $derived(items.filter(v=>v.id===selected)[0]);
@@ -23,11 +24,11 @@
     </Tooltip>
     </div>
 {/snippet}
-<div class="w-full h-full flex flex-row ">
-    <div class="flex-1 bg-accent/50 ">
+<div class="w-full h-full flex flex-row">
+    <div class="bg-accent/50  ">
         <DraggbleItemList orientation="vertical" bind:items={items} Comp={SidePanelRenderer} bind:selected={selected} dndZoneProps={{...dndZoneProps}}></DraggbleItemList>
     </div>
-    <div class="flex-4 bg-accent/10 p-4">
+    <div class="bg-accent/10 w-full ">
         {#if selectedItem}
             <selectedItem.panel></selectedItem.panel>
         {/if}

@@ -1,10 +1,11 @@
 <script lang="ts">
     import FullEditor from "$lib/components/base/fulleditor/FullEditor.svelte";
-    import { fs } from "$lib/base/fs";
-    import { resourceFetch } from "$lib/base/resource";
-    console.log(fs);
-    console.log(resourceFetch);
+    import type { WorkerHandlerAPI } from "$lib/emulator/types";
+    import * as comlink from 'comlink';
+    import { onMount } from "svelte";
+    onMount(async () => {
+        
+    });
 </script>
-<FullEditor>
 
-</FullEditor>
+<FullEditor></FullEditor>

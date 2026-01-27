@@ -596,6 +596,21 @@ function getHandler() {
                     break;
                 }
                 case p9_msg_t.P9_TWALK: {
+                    // fid[4] newfid[4] nwname[2] nwname*(wname[s])
+                    let [off, {fid, newfid, numNwname}] = Unmarshall(msgbytes, {
+                        fid: ["u32"],
+                        newfid: ["u32"],
+                        numNwname: ["u16"]
+                    });
+                    let names: string[] = [];
+                    for (let i = 0; i < numNwname; i++) {
+                        let [newOff, {n}] = Unmarshall(msgbytes, {
+                            n: ["sl"]
+                        }, {byteOffset: off});
+                        off = newOff;
+                        names.push(n);
+                    }
+                    
                     break;
                 }
                 case p9_msg_t.P9_RWALK: {

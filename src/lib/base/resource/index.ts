@@ -1,7 +1,13 @@
-import type { Component, ComponentProps } from "svelte";
+import { createContext, type Component, type ComponentProps } from "svelte";
 import RawTextViewer from "./viewers/RawTextViewer.svelte";
-
+import MonacoEditor from "./viewers/MonacoEditor.svelte";
+import { fileTypeFromBuffer } from 'file-type';
+import Mime from 'mime';
+import path from "path-browserify";
+import { Errno, type Exception } from "kerium";
+import type { FSProviderAPI } from '$lib/emulator/types';
 // --- Resource Types ---
+
 
 type ResourcePanel<T = Component<any, any>> = T extends Component<infer Props> ?
     {
@@ -30,22 +36,22 @@ type Resource<T extends unknown[]> = {
     }
 }[keyof Rmap<T>];
 type ResourceMember<
-  T extends unknown[],
-  K extends keyof Rmap<T>
+    T extends unknown[],
+    K extends keyof Rmap<T>
 > = {
-  type: K;
-  data: Rmap<T>[K];
+    type: K;
+    data: Rmap<T>[K];
 };
-type a<T extends unknown[]> = Extract<Resource<T>,ResourceMember<T, "data">>;
+type a<T extends unknown[]> = Extract<Resource<T>, ResourceMember<T, "data">>;
 // --- Response class ---
 type TheExtracted<T, K extends keyof Rmap<unknown[]>> = T extends Rmap<infer params> ? Rmap<params>[K] : never;
 
-type ToResource = <T extends unknown[], K extends keyof Rmap<T> >(type: K, val: Rmap<T>[K])=>ResourceMember<T, K>
+type ToResource = <T extends unknown[], K extends keyof Rmap<T>>(type: K, val: Rmap<T>[K]) => ResourceMember<T, K>
 
-const toResource: ToResource = (type, dat)=>{
-    return{
-       "type": type,
-       "data": dat as any
+const toResource: ToResource = (type, dat) => {
+    return {
+        "type": type,
+        "data": dat as any
     };
 };
 
@@ -68,7 +74,38 @@ export class ResourceResponse<T extends any[] = any[], R = Resource<T>> {
         this.resource = resource;
         this.headers = headers;
     }
-
+    get type() {
+        let r = this as ResourceResponse;
+        if (!r.resource) {
+            return "none";
+        }
+        return r.resource?.type;
+    }
+    get panel() {
+        let r = this as ResourceResponse;
+        if (!r.resource || r.resource.type !== "panel") {
+            throw new Error("Trying to get a panel from a non-panel response.");
+        }
+        else {
+            return r.resource.data;
+        }
+    }
+    get blob() {
+        let r = this as ResourceResponse;
+        if (!r.resource || r.resource.type !== "data") {
+            throw new Error("Trying to read the blob data from a non-data response.");
+        }
+        else {
+            if (!r.resource.data.data) {
+                throw new Error("Trying to read a refernece as a blob.")
+            }
+            return r.resource.data.data;
+        }
+    }
+    get stream() {
+        let b = this.blob;
+        return new Response(b).body;
+    }
     static async fromFetchResponse(fetchResponse: Response): Promise<ResourceResponse> {
         return new ResourceResponse<[]>(fetchResponse.status, fetchResponse.statusText, {
             headers: fetchResponse.headers,
@@ -89,14 +126,17 @@ export class ResourceResponse<T extends any[] = any[], R = Resource<T>> {
         return new ResourceResponse(404, "Not Found");
     }
 
-    static ok<R extends unknown[], K extends keyof Rmap<R>>(type: K, resource: TheExtracted<Rmap<R>, K>): ResourceResponse<R> {
-        return new ResourceResponse<R>(200, "OK", { resource: toResource<R, K>(type, resource) as Resource<R>});
+    static ok<R extends unknown[] = [], K extends keyof Rmap<R> = "panel">(type: K | "none", resource?: TheExtracted<Rmap<R>, K>): ResourceResponse<R> {
+        if (type === "none") {
+            return new ResourceResponse<R>(200, "OK");
+        }
+        if (!resource) {
+            throw new Error("Specified resource type, but no actual resource backing it.");
+        }
+        return new ResourceResponse<R>(200, "OK", { resource: toResource<R, K>(type, resource) as Resource<R> });
     }
-    
-}
-ResourceResponse.ok("panel", {
 
-} as ResourcePanel<[typeof RawTextViewer]>);
+}
 
 // --- Method types ---
 
@@ -190,19 +230,115 @@ class HttpHandler extends SimpleResourceHandler {
 
         if (response.resource && response.resource.type === "data") {
             let dat = response.resource.data.data;
-            if (dat) {
-                return new ResourceResponse<[typeof RawTextViewer]>(response.status, response.statusMessage, {resource: {
-                    type: "panel",
-                    data: {
-                        component: RawTextViewer,
-                        props: {
-                            dat: new Uint8Array(await dat.arrayBuffer())
+            if (dat?.type === "text/html") {
+                return new ResourceResponse<[typeof RawTextViewer]>(response.status, response.statusMessage, {
+                    resource: {
+                        type: "panel",
+                        data: {
+                            component: RawTextViewer,
+                            props: { dat: new Uint8Array([25]) }
                         }
                     }
-                }});
+                })
+            }
+            if (dat) {
+                return new ResourceResponse<[typeof RawTextViewer]>(response.status, response.statusMessage, {
+                    resource: {
+                        type: "panel",
+                        data: {
+                            component: RawTextViewer,
+                            props: {
+                                dat: new Uint8Array(await dat.arrayBuffer())
+                            }
+                        }
+                    }
+                });
             }
         }
         return ResourceResponse.notFound();
+    }
+}
+
+export class FileHandler extends SimpleResourceHandler {
+    fsAPI: FSProviderAPI;
+    constructor(fileSystemAPI: FSProviderAPI) {
+        super();
+        this.fsAPI = fileSystemAPI;
+    }
+
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+        const getRequest = await this.doGet(request);
+        let fsP = this.fsAPI;
+        if ((getRequest.status >= 200 && getRequest.status < 300) && getRequest.resource && getRequest.resource.type === "data" && getRequest.resource.data.data)
+            return new ResourceResponse<[typeof MonacoEditor]>(getRequest.status, getRequest.statusMessage, {
+                resource: {
+                    "type": "panel",
+                    data: {
+                        component: MonacoEditor,
+                        props: {
+                            value: getRequest.resource.data.data,
+                            onChangeContent: async (newC) => {
+                                await fsP.writeFile(this.getPathnameFromRequest(request), newC, newC.length, 0);
+                            }
+                        }
+                    }
+                }
+            });
+
+        return ResourceResponse.notFound();
+    }
+    getPathnameFromRequest(request: Request) {
+        return new URL(request.url).pathname;
+    }
+    async doGet(request: Request): Promise<ResourceResponse> {
+        let fsPath = this.getPathnameFromRequest(request);
+        let fsP = this.fsAPI;
+        let newC = await fsP.stat(fsPath);
+
+        try {
+            let readBuffer = (await fsP.readFile(fsPath, newC.size, 0)) as Uint8Array<ArrayBuffer>;
+            let mt = (await fileTypeFromBuffer(readBuffer))?.mime || Mime.getType(path.extname(fsPath))   || "";
+            console.log(mt);
+            return ResourceResponse.ok("data", {
+                data: new Blob([readBuffer], { type: mt  })
+            });
+        } catch (e) {
+            let ex = e as Exception;
+            if (ex.errno === Errno.ENOENT) {
+                return ResourceResponse.notFound();
+            }
+            else {
+                throw ex;
+            }
+        }
+    }
+    async doPut(request: Request): Promise<ResourceResponse> {
+        let fsPath = this.getPathnameFromRequest(request);
+        let fsP = this.fsAPI;
+        let buffer = new Uint8Array(await request.arrayBuffer());
+        await fsP.writeFile(fsPath, buffer, buffer.byteLength, 0);
+        return ResourceResponse.ok("none");
+    }
+}
+class RawResourceHandler extends SimpleResourceHandler {
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+        let p = await this.doGet(request);
+        return ResourceResponse.ok<[typeof RawTextViewer]>("panel", {
+            component: RawTextViewer,
+            props: {
+                dat: new Uint8Array(await p.blob.arrayBuffer())
+            }
+        });
+    }
+}
+class Sample extends RawResourceHandler {
+    async doGet(request: Request): Promise<ResourceResponse> {
+        if (new URL(request.url).pathname === "/wait") {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+        return ResourceResponse.ok("data", {
+            data: new Blob(["URL: " + request.url])
+        })
     }
 }
 
@@ -236,14 +372,19 @@ export class ResourceManager {
 
         return handler.fetch(request);
     }
+    static async addDefaultSchemes(resourceManager: ResourceManager) {
+        resourceManager
+            .registerScheme("http", new HttpHandler())
+            .registerScheme("https", new HttpHandler())
+            .registerScheme("sample", new Sample());
+    }
 }
+
 
 // --- Default instance ---
 
-export const resourceManager = new ResourceManager()
-    .registerScheme("http", new HttpHandler())
-    .registerScheme("https", new HttpHandler())
-
+export const defaultResourceManager = new ResourceManager()
+ResourceManager.addDefaultSchemes(defaultResourceManager)
 // Convenience export
-export const resourceFetch = resourceManager.fetch.bind(resourceManager);
-console.log(resourceFetch);
+export const defaultResourceFetch = defaultResourceManager.fetch.bind(defaultResourceManager);
+export const [getResourceManager, setResourceManager] = createContext<ResourceManager>();

@@ -55,9 +55,9 @@ async function destroyIndex() {
 Object.defineProperty(globalThis, 'idx', {
     value: {saveIndex, destroyIndex}
 });
-configure({mounts: {
+await configure({mounts: {
     '/': int
 }});
 
-
-export { fs, saveIndex, int as webfs };
+let fsP = fs.promises;
+export { fs, saveIndex, int as webfs,  fsP};

@@ -1,7 +1,7 @@
 import { type Disposable } from "$lib/base/disposable";
 
 export interface TypedEvent<T> {
-  (listener: (data: T) => void): Disposable;
+  (listener: (data: T) => boolean|void): Disposable;
 }
 
 const EVENT_NAME = "dat";
@@ -25,7 +25,7 @@ export class Emitter<T> implements Disposable {
       };
 
       target.addEventListener(EVENT_NAME, handler);
-
+      
       return {
         dispose: () => {
           this.eventTarget?.removeEventListener(EVENT_NAME, handler);
@@ -34,14 +34,16 @@ export class Emitter<T> implements Disposable {
     };
   }
 
-  emit(data: T): void {
+  emit(data: T): boolean {
     if (!this.eventTarget) {
       throw new Error("Cannot call after dispose()");
     }
-
+    let ce =  new CustomEvent<T>(EVENT_NAME, { detail: data });
     this.eventTarget.dispatchEvent(
-      new CustomEvent<T>(EVENT_NAME, { detail: data })
+     ce
     );
+    return ce.defaultPrevented;
+
   }
 
   dispose(): void {
