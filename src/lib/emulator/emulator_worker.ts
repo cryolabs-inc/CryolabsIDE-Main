@@ -12,6 +12,7 @@ import { fs, fsP } from "$lib/base/fs";
 import type { ConnectParams, ExtensionAPI, FSDirent, FSProviderAPI, ShellAPI } from "./types";
 import path from "path";
 import { Errno, withErrno } from "kerium";
+import { getHandler } from "$lib/base/fs/p9handler";
 let basePath = "/";
 let vm_instance = ConstructExtendablePromise<any>();
 
@@ -321,18 +322,25 @@ let progressGroup: MessagePort[] = [];
 let msgLoop: ExtendablePromise<MessageLoop> = ConstructExtendablePromise();
 class FSProviderInternalImpl implements FSProviderAPI {
     fs9p: any;
-    fsProv = "fs-provider-lock"
-    async withLock<T>(func: (...args: any[]) => T): Promise<T> {
-        return navigator.locks.request(this.fsProv, async (_) => {
+
+    private normalizeLockPath(targetPath: string): string {
+        // Normalize path for consistent locking (remove trailing slashes, resolve ..)
+        return targetPath.replace(/\/+$/, '') || '/';
+    }
+
+    async withLock<T>(targetPath: string, func: (...args: any[]) => T): Promise<T> {
+        const lockName = `fs-lock:${this.normalizeLockPath(targetPath)}`;
+        return navigator.locks.request(lockName, async (_) => {
             return await func();
         });
     }
-    constructor(fsOpfs: any) {
 
+    constructor(fsOpfs: any) {
         this.fs9p = fsOpfs;
     }
+
     async readFile(path: string, length?: number, position?: number): Promise<Uint8Array> {
-        return this.withLock(async () => {
+        return this.withLock(path, async () => {
             let st = await fsP.stat(path);
             if (st.isDirectory()) {
                 throw Errno.EISDIR;
@@ -347,7 +355,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     }
 
     async writeFile(path: string, data: Uint8Array, length: number, position: number): Promise<number> {
-        return this.withLock(async () => {
+        return this.withLock(path, async () => {
             length ??= data.length;
             position ??= 0;
             let fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT);
@@ -356,24 +364,29 @@ class FSProviderInternalImpl implements FSProviderAPI {
             return bytesWritten;
         });
     }
+
     async readLargeFile(p: string): Promise<File> {
-        return this.withLock(async () => {
+        return this.withLock(p, async () => {
             let dat = await fsP.readFile(p) as Uint8Array<ArrayBuffer>;
             let st = await fsP.stat(p);
             return new File([dat], path.basename(p), { lastModified: st.mtimeMs });
         });
     }
+
     async stat(path: string): Promise<fs.Stats> {
-        return this.withLock(async () => await fsP.stat(path));
+        return this.withLock(path, async () => await fsP.stat(path));
     }
+
     async createDirectory(path: string): Promise<void> {
-        return this.withLock(async () => await fsP.mkdir(path));
+        return this.withLock(path, async () => await fsP.mkdir(path));
     }
+
     async readDirectory(path: string): Promise<string[]> {
-        return this.withLock(async () => await fsP.readdir(path));
+        return this.withLock(path, async () => await fsP.readdir(path));
     }
+
     async ls(path: string): Promise<FSDirent[]> {
-        return this.withLock(async () => {
+        return this.withLock(path, async () => {
             let od = await fsP.opendir(path);
             let fsd = [] as FSDirent[];
             for await (let op of od) {
@@ -387,13 +400,15 @@ class FSProviderInternalImpl implements FSProviderAPI {
             return fsd;
         });
     }
+
     async removeEntry(path: string): Promise<void> {
-        return this.withLock(async () => {
+        return this.withLock(path, async () => {
             await fsP.rm(path);
         });
     }
+
     async removeDirectory(path: string): Promise<void> {
-        return this.withLock(async () => { await fsP.rmdir(path) });
+        return this.withLock(path, async () => { await fsP.rmdir(path) });
     }
 
 }
@@ -550,6 +565,10 @@ async function workerCode() {
     let initArgs = [uri.href, "sdjfksjf"];
     let initArgsB64 = initArgs.map(v => btoa(v));
     let final = initArgsB64.join(" ");
+    let hda = disk_storage && {
+        buffer: disk_storage
+    };
+
     let v86_startupoptions = {
         bios: {
             url: getSrvRoot() + "seabios.bin"
@@ -558,23 +577,21 @@ async function workerCode() {
             url: getSrvRoot() + "vgabios.bin",
         },
         bzimage: {
-            url: getSrvRoot() + "vmlinuz-virt",
+            url: getSrvRoot() + "bzImage",
             size: 7647744,
         },
         // },
-        // hda: {
-        //     buffer: disk_storage,
-        //     size: disk_storage.byteLength,
-        //     async: false
-        // },
-        cmdline: `console=ttyS0 root=/dev/sda init_args=\"${final}\" init=/init`,
+        hda,
+        cmdline: `console=ttyS0 root=/dev/sda init=/sbin/init rw`,
         wasm_path: `${getSrvRoot()}v86.wasm`,
         memory_size: 1024 * 1024 * 1024 * 2,
         disable_keyboard: true,
         disable_mouse: true,
         virtio_console: true,
         autostart: true,
-        "filesystem": {},
+        "filesystem": {
+            handle9p: getHandler()
+        },
         net_device: {
             type: "virtio",
             relay_url: "fetch",

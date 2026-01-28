@@ -7,7 +7,7 @@ export class LocalForageProvider implements StorageProvider {
     }
     async get<T>(key: string, defaultVal: T): Promise<T> {
         let it = await localforage.getItem<T>(key);
-        if (!it) {
+        if (it === null) {
             return defaultVal;
         }
         return it;

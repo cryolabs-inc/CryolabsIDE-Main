@@ -13,6 +13,7 @@ export interface StructDataMapOutput {
     "u16array": Uint16Array;
     "u32array": Uint32Array;
     "u64array": BigUint64Array;
+    
 }
 export type StructDataMapOutputT = {
     [K in keyof StructDataMapOutput]: StructDataMapOutput[K]

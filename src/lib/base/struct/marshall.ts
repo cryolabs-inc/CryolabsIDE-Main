@@ -25,6 +25,7 @@ export const Marshall: MarshallFunction = function (ar, {addStringLength} = {add
                 let [,toAdd] = val;
                 elems.push(new Uint16Array([toAdd.length]));
                 elems.push(texten.encode(toAdd));
+                totalSize += toAdd.length + 2;
                 break;
             }
             case "u8": {
@@ -36,6 +37,7 @@ export const Marshall: MarshallFunction = function (ar, {addStringLength} = {add
                 let mf = new TextEncoder().encode(val[1]);
                 if (addS) {
                     elems.push(new Uint16Array([mf.length]));
+                    totalSize += 2;
                 }
                 elems.push(mf.slice());
                 totalSize += mf.length;
@@ -114,13 +116,9 @@ export const Marshall: MarshallFunction = function (ar, {addStringLength} = {add
     let ret = new Uint8Array(ab);
     let offset = 0;
     for (let el of elems) {
-        ret.set(new Uint8Array(el.buffer), offset);
+        ret.set(new Uint8Array(el.buffer, el.byteOffset, el.byteLength), offset);
         offset += el.byteLength;
     }
 
     return ret;
 };
-Marshall({
-    x: ["u8", 2],
-    "f d": ["u64", 2n]
-});

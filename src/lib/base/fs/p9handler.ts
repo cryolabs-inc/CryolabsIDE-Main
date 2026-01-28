@@ -3,9 +3,10 @@ import { Marshall, Unmarshall } from '../struct';
 import { type Dir } from '@zenfs/core';
 
 import * as p from 'path';
-import { S_IFDIR, S_IFMT } from '@zenfs/core/constants.js';
+import { O_APPEND, O_RDWR, O_TRUNC, O_WRONLY, S_IFDIR, S_IFMT } from '@zenfs/core/constants.js';
 import { Exception, withErrno } from 'kerium';
 import { DirType } from '@zenfs/core/vfs/dir.js';
+import { fsP } from '.';
 enum p9_qid_t {
     P9_QTDIR = 0x80,
     P9_QTAPPEND = 0x40,
@@ -101,6 +102,38 @@ enum p9_msg_t {
 
 interface Qid { type: number, version: number, path: bigint };
 interface QidWithPath extends Qid { pathId: string };
+
+function openFlagsToString(fs: typeof import('.').fsP, flags: number) {
+  const result = [];
+  const { constants } = fs;
+
+  // 1. Handle Access Modes (Special case because O_RDONLY is usually 0)
+  // We use O_ACCMODE (0x3) to isolate the lower 2 bits.
+  const accMode = flags & 0x3;
+  if (accMode === constants.O_RDONLY) result.push('O_RDONLY');
+  else if (accMode === constants.O_WRONLY) result.push('O_WRONLY');
+  else if (accMode === constants.O_RDWR) result.push('O_RDWR');
+
+  // 2. Check for individual status/creation flags
+  const otherFlags = [
+    { name: 'O_CREAT', value: constants.O_CREAT },
+    { name: 'O_EXCL', value: constants.O_EXCL },
+    { name: 'O_TRUNC', value: constants.O_TRUNC },
+    { name: 'O_APPEND', value: constants.O_APPEND },
+    { name: 'O_NONBLOCK', value: constants.O_NONBLOCK },
+    { name: 'O_SYNC', value: constants.O_SYNC },
+    { name: 'O_DIRECTORY', value: constants.O_DIRECTORY },
+    { name: 'O_NOFOLLOW', value: constants.O_NOFOLLOW },
+  ];
+
+  for (const { name, value } of otherFlags) {
+    if (value && (flags & value) === value) {
+      result.push(name);
+    }
+  }
+
+  return result.join('|');
+}
 class FidInfo implements Qid {
     type: number = 0;
     version: number = 0;
@@ -237,8 +270,11 @@ class FidInfo implements Qid {
         if (!(this.handle instanceof FileHandle)) {
             throw withErrno("EISDIR", "Tried to write data to a directory");
         }
-        await this.handle.write(data, { position });
-
+        let beforeDat: Uint8Array|null = null;
+        
+        let a =  await this.handle.write(data, { position, length: data.length});
+        
+        return a;
     }
     async sync() {
         // no sync needed.
@@ -289,13 +325,12 @@ function getHandler() {
     let tagsFlushed: Set<number> = new Set();
     
 
-    async function p9handler({ promises: fs }: typeof import('.').fs, request: Uint8Array, respond: (response: Uint8Array) => void) {
-
+    async function p9handler(fs: typeof import('.').fsP, request: Uint8Array, respond: (response: Uint8Array) => void) {
         let [off, { tag, length, method }] = Unmarshall(request, {
             "length": ["u32"],
             "method": ["u8"],
             tag: ["u16"]
-        });
+        }, {littleEndian: true});
         let [, { msgbytes }] = Unmarshall(request, { msgbytes: ["u8array", length - 4 - 1 - 2] }, { byteOffset: off })
         let methodSpecific: Uint8Array | null = null;
         let methodNum = method as p9_msg_t;
@@ -401,19 +436,19 @@ function getHandler() {
                         mode: ["u32", Number(st.mode)],
                         uid: ["u32", Number(st.uid)],
                         gid: ["u32", Number(st.gid)],
-                        nlink: ["u64", st.nlink],
-                        rdev: ["u64", st.rdev],
-                        size: ["u64", st.size],
-                        blksize: ["u64", st.blksize],
-                        blocks: ["u64", st.blocks],
-                        atime_sec: ['u64', st.atimeMs / 1000n],
-                        atime_nsec: ['u64', st.atimeNs],
-                        mtime_sec: ['u64', st.mtimeMs / 1000n],
-                        mtime_nsec: ["u64", st.mtimeNs],
-                        ctime_sec: ["u64", st.ctimeMs / 1000n],
-                        ctime_nsec: ['u64', st.ctimeNs],
-                        btime_sec: ["u64", st.birthtimeMs / 1000n],
-                        btime_nsec: ["u64", st.birthtimeNs],
+                        nlink: ["u64", BigInt(st.nlink)],
+                        rdev: ["u64", BigInt(st.rdev)],
+                        size: ["u64", BigInt(st.size)],
+                        blksize: ["u64", BigInt(st.blksize)],
+                        blocks: ["u64", BigInt(st.blocks)],
+                        atime_sec: ['u64', BigInt(st.atimeMs) / 1000n],
+                        atime_nsec: ['u64', BigInt(st.atimeNs)],
+                        mtime_sec: ['u64', BigInt(st.mtimeMs) / 1000n],
+                        mtime_nsec: ["u64", BigInt(st.mtimeNs)],
+                        ctime_sec: ["u64", BigInt(st.ctimeMs) / 1000n],
+                        ctime_nsec: ['u64', BigInt(st.ctimeNs)],
+                        btime_sec: ["u64", BigInt(st.birthtimeMs) / 1000n],
+                        btime_nsec: ["u64", BigInt(st.birthtimeNs)],
                         gen: ["u64", 0n],
                         data_version: ["u64", 0n]
                     });
@@ -538,12 +573,12 @@ function getHandler() {
                     break;
                 }
                 case p9_msg_t.P9_TVERSION: {
-                    let [] = Unmarshall(msgbytes, {
+                    let [, {msize, version}] = Unmarshall(msgbytes, {
                         msize: ["u32"],
                         version: ["sl"]
                     });
                     methodSpecific = Marshall({
-                        msize: ["u32", 2 * 1024 * 1024 * 1024],
+                        msize: ["u32", msize],
                         version: ["sl", "9P2000.L"]
                     });
                     break;
@@ -554,14 +589,14 @@ function getHandler() {
                 }
                 case p9_msg_t.P9_TATTACH: {
                     // fid[4] afid[4] uname[s] aname[s] n_uname[4]
-                    let [, {fid, uname}] = Unmarshall(msgbytes, {
+                    let [, {fid, uname, n_uname}] = Unmarshall(msgbytes, {
                         fid: ["u32"],
                         afid: ["u32"],
                        uname: ["sl"],
                        aname: ["sl"] ,
                        n_uname: ["u32"]
                     });
-                    console.info(`[INFO] 9p session established for ${uname}`);
+                    console.info(`[INFO] 9p session established for ${uname}, uid: ${n_uname}`);
                     fids[fid] = await getRootFidInfo(fs);
                     methodSpecific = fmtQid(fids[fid].asQid());
                     break;
@@ -678,9 +713,9 @@ function getHandler() {
                         data: ["u8array", count]
                     }, {byteOffset: 16}); // 4 + 8 + 4
                     let f = fids[fid];
-                    await f.write(data, Number(offset));
+                    let r = await f.write(data, Number(offset));
                     methodSpecific = Marshall({
-                        count: ["u32", data.length]
+                        count: ["u32", r.bytesWritten]
                     });
                     break;
                 }
@@ -745,7 +780,7 @@ function getHandler() {
                 return;
             }
             let retBuffer = Marshall({
-                method: ["u16", retMethod],
+                method: ["u8", retMethod],
                 tag: ["u16", tag],
                 dat: ["u8array", methodSpecific]
             });
@@ -759,7 +794,7 @@ function getHandler() {
             if (e instanceof Exception) {
                 let errNum = e.errno;
                 let dat = Marshall({
-                    method: ["u16", p9_msg_t.P9_RLERROR],
+                    method: ["u8", p9_msg_t.P9_RLERROR],
                     tag: ["u16", tag],
                     ecode: ["u32", errNum]
 
@@ -777,7 +812,7 @@ function getHandler() {
 
         }
     }
-    return p9handler;
+    return p9handler.bind(null, fsP);
 }
 
 export { getHandler };

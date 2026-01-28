@@ -36,7 +36,6 @@ export interface ExtensionAPI {
 	 */
 	openPtyToShell(cmd: string, dataCallback: (data: Uint8Array)=>void, closeCallback: ()=>void): Promise<ShellAPI>
 }
-
 interface FSDirent {
     name: string;
     dt_type: number;

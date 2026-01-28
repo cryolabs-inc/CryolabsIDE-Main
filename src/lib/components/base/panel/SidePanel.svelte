@@ -28,7 +28,7 @@
     <div class="bg-accent/50  ">
         <DraggbleItemList orientation="vertical" bind:items={items} Comp={SidePanelRenderer} bind:selected={selected} dndZoneProps={{...dndZoneProps}}></DraggbleItemList>
     </div>
-    <div class="bg-accent/10 w-full ">
+    <div class="bg-accent/10 w-full p-4">
         {#if selectedItem}
             <selectedItem.panel></selectedItem.panel>
         {/if}
