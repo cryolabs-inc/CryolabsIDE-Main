@@ -12,7 +12,7 @@
     import { usePageAPI } from "../panel/apis/PageAPI";
     import path from "path";
     import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
-    let { onResize }: { onResize: TypedEvent<void> } = $props();
+    let { onResize, basePath}: { onResize: TypedEvent<void>, basePath: string} = $props();
     const resourceManager = getResourceManager();
 
     const papi = usePageAPI();
@@ -47,7 +47,7 @@
         await new Promise((resolve) => {
             emulatorWorker.onmessage = resolve;
         });
-        emulatorWorker.postMessage({}, [mainWorkerChannel.port2]);
+        emulatorWorker.postMessage({start: true, basePath}, [mainWorkerChannel.port2]);
         let api = comlink.wrap(mainWorkerChannel.port1) as WorkerHandlerAPI;
         let serialPort = new MessageChannel();
         serialPort.port1.onmessage = (e) => {

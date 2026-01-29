@@ -41,6 +41,7 @@
         type ExtendablePromise,
     } from "$lib/utils";
     import Emulator from "../emulator/Emulator.svelte";
+    let {basePath = "/"}:{basePath?: string} = $props();
     class FullEditorPrefs {
         lowerTabsHeight: number = 20;
         upperTabsHeight: number = 80;
@@ -186,5 +187,5 @@
             </ResizablePaneGroup>
         </ResizablePane>
     </ResizablePaneGroup>
-    <Emulator onResize={onResize.event}></Emulator>
+    <Emulator onResize={onResize.event} {basePath}></Emulator>
 </div>

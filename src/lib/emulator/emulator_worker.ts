@@ -125,9 +125,10 @@ function attachMessageHandler(emulator: any) {
         sendForCid
     };
 }
+let queryParameters = new URLSearchParams(location.search);
 function getSrvRoot() {
 
-    return new URL(basePath, location.href).href;
+    return  new URL(basePath, location.href).href;
 }
 function receiveMsgpackMessage(emulator: any, cid: number, onMessage: (msg: Uint8Array) => void, onClose: () => void) {
 
@@ -412,7 +413,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     }
 
 }
-function downloadV86() {
+function downloadV86(getSrvRoot: ()=>string) {
 
     return import(/* vite-treat-as-asset */ getSrvRoot() + 'libv86.mjs');
 }
@@ -495,10 +496,14 @@ self.onmessage = (e) => {
     let port = e.ports[0];
     comlink.expose(workerHandler, port);
     port.start();
+    if (e.data.start) {
+        let gsrvroot = ()=>(e.data.basePath as string) ?? getSrvRoot()
+        workerCode(gsrvroot);
+    }
 };
 
-async function workerCode() {
-    let v86 = await downloadV86();
+async function workerCode(getSrvRoot: ()=>string) {
+    let v86 = await downloadV86(getSrvRoot);
     let disk_storage = await localforage.getItem("disk_downloaded") as ArrayBuffer | undefined;
     if (!disk_storage) {
 
@@ -617,6 +622,5 @@ async function workerCode() {
 
 }
 
-workerCode();
 // export type {WorkerHandlerAPI};
 self.postMessage({ msg: "ready" });
