@@ -62,6 +62,7 @@
 		"utilium": "^2.6.0",
 		"v86": "^0.5.305",
 		"vite-plugin-commonjs": "^0.10.4",
-		"vite-plugin-monaco-editor": "^1.1.0"
+		"vite-plugin-monaco-editor": "^1.1.0",
+		"yaml": "^2.8.2"
 	}
 }
