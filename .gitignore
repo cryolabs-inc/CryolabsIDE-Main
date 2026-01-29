@@ -23,3 +23,8 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /static/bzImage
 /static/disk
+/static/disk.tar
+/static/boot.tar
+/static/vmlinuz-virt
+/static/initramfs-virt
+/disk

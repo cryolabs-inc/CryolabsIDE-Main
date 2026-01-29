@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+
+depend() {
+    need localmount net
+    before agetty.tty1 
+}
+
+start() {
+    # just tell the serial consoles we up baby
+    
+    ip link set eth0 up
+    ip link set lo up
+    mount -t 9p host9p /root
+    udhcpc
+    ls /root
+    ebegin "Sending the serial consoles a sync notice to sync a save state"
+    sleep 0.75
+    eend 0
+}
