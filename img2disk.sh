@@ -19,7 +19,7 @@ fi
 docker export tempRE -o disk.tar
 truncate -s 512M disk
 mkdir ext_out
-pv disk.tar | tar -xf - -C ext_out
+tar -xf  disk.tar -C ext_out
 
 [[ -f ./ext_out/boot/vmlinuz-virt ]] && cp ./ext_out/boot/vmlinuz-virt . 
 [[ -f ./ext_out/boot/initramfs-virt ]] && cp ./ext_out/boot/initramfs-virt . 

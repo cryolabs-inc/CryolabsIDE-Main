@@ -8,4 +8,4 @@
     });
 </script>
 
-<FullEditor basePath={""} ></FullEditor>
+<FullEditor basePath={"/"} ></FullEditor>
