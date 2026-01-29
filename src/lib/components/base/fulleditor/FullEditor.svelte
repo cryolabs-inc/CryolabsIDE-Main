@@ -14,7 +14,11 @@
         ResizablePaneGroup,
     } from "$lib/components/ui/resizable";
     import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
-    import type { ExtensionAPI, FSProviderAPI, WorkerHandlerAPI } from "$lib/emulator/types";
+    import type {
+        ExtensionAPI,
+        FSProviderAPI,
+        WorkerHandlerAPI,
+    } from "$lib/emulator/types";
     import * as comlink from "comlink";
     import {
         FileHandler,
@@ -32,7 +36,27 @@
     import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
     import { Emitter } from "$lib/base/events";
     import FilePanel from "../panel/contents/FilePanel.svelte";
-    import { ConstructExtendablePromise, type ExtendablePromise } from "$lib/utils";
+    import {
+        ConstructExtendablePromise,
+        type ExtendablePromise,
+    } from "$lib/utils";
+    import Emulator from "../emulator/Emulator.svelte";
+    let {basePath = "/"}:{basePath?: string} = $props();
+    class FullEditorPrefs {
+        lowerTabsHeight: number = 20;
+        upperTabsHeight: number = 80;
+        stimulusWidth: number = 80;
+        from(rec: Record<string, any> = {}) {
+            if (rec["lowerTabsHeight"])
+                this.lowerTabsHeight = rec["lowerTabsHeight"];
+            if (rec["upperTabsHeight"])
+                this.upperTabsHeight = rec["upperTabsHeight"];
+            if (rec["stimulusWidth"]) this.stimulusWidth = rec["stimulusWidth"];
+        }
+        async savePrefs() {
+            await Prefs.default().store("full_editor.prefs", { ...this });
+        }
+    }
     let defaultItems = [
         {
             id: "main-menu",
@@ -52,7 +76,7 @@
             Icon: FileIcon,
             clickable: true,
             tooltip: "File",
-            panel: FilePanel
+            panel: FilePanel,
         },
     ] as SidePanelItem<unknown>[];
     let items: SidePanelItem<unknown>[] | undefined = $state();
@@ -81,95 +105,51 @@
         items;
         storeNewItems();
     });
-    let rm = new ResourceManager();
+    let resourceManager = new ResourceManager();
     let ep = ConstructExtendablePromise();
-
-    class TerminalScheme extends SimpleResourceHandler {
-        async doRetrpanel(request: Request): Promise<ResourceResponse> {
-            let url = new URL(request.url);
-            let termName = path.basename(url.pathname);
-            if (!papi.getTerminal(termName)) {
-                return ResourceResponse.notFound();
-            }
-            if (termName === "hvc") {
-
-            }
-            return ResourceResponse.ok<[typeof TerminalView]>("panel", {
-                component: TerminalView,
-                props: {
-                    termId: termName,
-                }
-            });
-        }
-    }
-    ResourceManager.addDefaultSchemes(rm);
-    rm.registerScheme("term", new TerminalScheme());
-    setResourceManager(rm);
+    let fullEditorPrefs = new FullEditorPrefs();
+    
+    ResourceManager.addDefaultSchemes(resourceManager);
+    setResourceManager(resourceManager);
     let rc = new ResourceLinkContext();
     setResourceLinkCtx(rc);
     let papi = new PageAPI(rc);
     setPageAPI(papi);
     let onResize = new Emitter<void>();
-    onMount(async () => {
-        let wx = new Worker(
-            new URL("../../../emulator/emulator_worker.ts", import.meta.url),
-            { type: "module" },
-        );
-        let em = new Emitter<string>();
 
-        let pch = new MessageChannel();
-        pch.port1.start();
-        await new Promise((resolve) => {
-            wx.onmessage = resolve;
-        });
-        wx.postMessage({}, [pch.port2]);
-        let api = comlink.wrap(pch.port1) as WorkerHandlerAPI;
-        let chan = new MessageChannel();
-        chan.port1.onmessage = (e)=>{
-            let evt = e as MessageEvent<{type: string, data: string}>;
-            if (evt.data.type === "terminalData") {
-                em.emit(evt.data.data);
-            }
+    let lowerTab = $state<ResizablePane>();
+    let upperTab = $state<ResizablePane>();
+    let stimulusPane = $state<ResizablePane>();
+    onMount(async () => {
+        if (!lowerTab || !upperTab || !stimulusPane) {
+            return;
         }
+        fullEditorPrefs.from(await Prefs.default().get("full_editor.prefs", {}));
+        lowerTab.resize(fullEditorPrefs.lowerTabsHeight);
+        console.log(lowerTab.isCollapsed());
+        upperTab.resize(fullEditorPrefs.upperTabsHeight);
+        stimulusPane.resize(fullEditorPrefs.stimulusWidth);
         
-        chan.port1.start();
-        let fsChan = new MessageChannel();
-        console.log(api);
-        let extensionAPIChannel = new MessageChannel();
         
-        await api.connect(
-            comlink.transfer(
-                {
-                    fileSystemPort: fsChan.port2,
-                    serialConsolePort: chan.port2,
-                    extensionApi: extensionAPIChannel.port2
-                },
-                [fsChan.port2, chan.port2],
-            ),
-        );
-        extensionAPIChannel.port1.start();
-        let epapi= comlink.wrap(extensionAPIChannel.port1) as ExtensionAPI;
-        epapi.openPtyToShell("", (dat)=>{
-            
-        }, ()=>{})
-        let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
-        rm.registerScheme("file", new FileHandler(fs));
-        console.log(fs);
-        papi.addTerminal("serial0", {
-            textEv: em.event,
-            onResizeNeeded: onResize.event,
-            write(dat) {
-                chan.port1.postMessage({data: dat});
-            }
-        });
-        
-        papi.openLink("term:///serial0", "tabs_lower");
     });
+    function newResizeHandler(val: (newSize: number) => void) {
+        async function postResize(newSize: number) {
+            onResize.emit();
+            await fullEditorPrefs.savePrefs();
+        }
+        function rh(newSize: number) {
+            val(newSize);
+            postResize(newSize).then(()=>{
+                // tell user that prefs have bene saved.
+            });
+        }
+        return rh;
+    }
 </script>
 
 <div class="w-full h-full flex flex-row">
     <ResizablePaneGroup direction="horizontal">
-        <ResizablePane minSize={20} onResize={e=>onResize.emit()}>
+        <ResizablePane minSize={20}>
             {#await updItems()}
                 <div></div>
             {:then}
@@ -179,16 +159,33 @@
             {/await}
         </ResizablePane>
         <ResizableHandle></ResizableHandle>
-        <ResizablePane defaultSize={80}>
+        <ResizablePane bind:this={stimulusPane} defaultSize={80} onResize={newResizeHandler(val=>{
+            fullEditorPrefs.stimulusWidth = val;
+        })}>
             <ResizablePaneGroup direction="vertical">
-                <ResizablePane >
+                <ResizablePane
+                    bind:this={upperTab}
+                    defaultSize={80}
+                    onResize={newResizeHandler((ns)=>{
+                        fullEditorPrefs.upperTabsHeight = ns;
+                    })}
+                >
                     <Browser></Browser>
                 </ResizablePane>
                 <ResizableHandle></ResizableHandle>
-                <ResizablePane defaultSize={20} onResize={()=>onResize.emit()} minSize={20} >
+                <ResizablePane
+                    bind:this={lowerTab}
+                    defaultSize={20}
+                    onResize={newResizeHandler((newSize)=>{
+                        fullEditorPrefs.lowerTabsHeight = newSize;
+                    })}
+                    minSize={20}
+                    collapsible={true}
+                >
                     <Browser target="tabs_lower"></Browser>
                 </ResizablePane>
             </ResizablePaneGroup>
         </ResizablePane>
     </ResizablePaneGroup>
+    <Emulator onResize={onResize.event} {basePath}></Emulator>
 </div>

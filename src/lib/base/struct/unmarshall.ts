@@ -3,6 +3,7 @@ import type { MarshallParams, StructDataMapOutput, StructDataMapInput, MarshallF
 export const Unmarshall: UnmarshallFunction = function (arrayBuffer, keys, arg = {}) {
   // Implementation
   let retObject: Record<string, StructDataMapOutputT> = {};
+
   let u8 = new Uint8Array(arrayBuffer);
   let dataView = new DataView(arrayBuffer.buffer);
   let { littleEndian = true, byteOffset = 0 } = arg;
@@ -12,10 +13,11 @@ export const Unmarshall: UnmarshallFunction = function (arrayBuffer, keys, arg =
     let readSize = 0;
     switch (vm[0]) {
       case "sl": {
-        let len = dataView.getUint16(byteOffset, true);
-        let name = new TextDecoder().decode(u8.slice(byteOffset, byteOffset + len));
+        let len = dataView.getUint16(byteOffset, littleEndian);
+        let name = new TextDecoder().decode(u8.slice(byteOffset + 2, byteOffset + 2 + len));
         retObject[k] = name;
         byteOffset += 2 + len;
+        break;
       }
       case "s": {
         if (!vm[1]) {
@@ -41,7 +43,7 @@ export const Unmarshall: UnmarshallFunction = function (arrayBuffer, keys, arg =
         break;
       }
       case "u64": {
-        retObject[k] = dataView.getBigUint64(byteOffset, true);
+        retObject[k] = dataView.getBigUint64(byteOffset, littleEndian);
         byteOffset += 8;
         break;
       }
@@ -66,27 +68,33 @@ export const Unmarshall: UnmarshallFunction = function (arrayBuffer, keys, arg =
         break;
       }
       case "u8array": {
-        let ret = new Uint8Array(u8.slice(byteOffset, byteOffset + vm[1]! * 1).buffer);
+        let ret = u8.slice(byteOffset, byteOffset + vm[1]!);
         retObject[k] = ret;
         byteOffset += ret.byteLength;
         break;
       }
       case "u16array": {
-        let ret = new Uint16Array(u8.slice(byteOffset, byteOffset + vm[1]! * 2).buffer);
+        let byteLength = vm[1]! * 2;
+        let sliced = u8.slice(byteOffset, byteOffset + byteLength);
+        let ret = new Uint16Array(sliced.buffer, sliced.byteOffset, vm[1]!);
         retObject[k] = ret;
-        byteOffset += ret.byteLength;
+        byteOffset += byteLength;
         break;
       }
       case "u32array": {
-        let ret = new Uint32Array(u8.slice(byteOffset, byteOffset + vm[1]! * 4).buffer);
+        let byteLength = vm[1]! * 4;
+        let sliced = u8.slice(byteOffset, byteOffset + byteLength);
+        let ret = new Uint32Array(sliced.buffer, sliced.byteOffset, vm[1]!);
         retObject[k] = ret;
-        byteOffset += ret.byteLength;
+        byteOffset += byteLength;
         break;
       }
       case "u64array": {
-        let ret = new BigUint64Array(u8.slice(byteOffset, byteOffset + vm[1]! * 8).buffer);
+        let byteLength = vm[1]! * 8;
+        let sliced = u8.slice(byteOffset, byteOffset + byteLength);
+        let ret = new BigUint64Array(sliced.buffer, sliced.byteOffset, vm[1]!);
         retObject[k] = ret;
-        byteOffset += ret.byteLength;
+        byteOffset += byteLength;
         break;
       }
     }
