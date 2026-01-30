@@ -7,7 +7,9 @@ let fun = (monacoEditorPlugin.default as unknown as typeof monacoEditorPlugin).d
 export default defineConfig({ plugins: [tailwindcss(), sveltekit(), commonjs(), fun({})], resolve: {
     alias: {
         "path": "path-browserify"
-    }
+    },
 },server: {
     hmr: false
+}, "worker": {
+    format: "es"
 }});
