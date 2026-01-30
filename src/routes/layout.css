@@ -2,7 +2,34 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+.dragging-over {
+  background-color: aquamarine;
 
+}
+.minimizing {
+  animation: minimize1 0.2s;
+  animation-fill-mode: forwards; /* Keeps last keyframe */
+}
+.maximizing {
+  animation: maximize1 0.8s;
+  animation-fill-mode: forwards;
+}
+@keyframes minimize1 {
+  from {
+    transform: scale(100%);
+  }
+  to {
+    transform: scale(0%);
+  }
+}
+@keyframes maximize1 {
+  from {
+    transform: scale(0%);
+  }
+  to {
+    transform: scale(100%);
+  }
+}
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);

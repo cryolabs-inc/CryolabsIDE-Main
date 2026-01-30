@@ -5,7 +5,6 @@
         
 
         let resource = await defaultResourceFetch(objectURL, {method: "RETRPANEL"});
-        console.log(resource.resource);
         if (resource.resource && resource.resource.type === "panel") {
             return {
                 Comp: resource.resource.data.component,
@@ -17,7 +16,7 @@
 </script>
 
 {#await getPanel(url)}
-
+    <div>Loading panel...</div>
 
 {:then val}
     {#if val}

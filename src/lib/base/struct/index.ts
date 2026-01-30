@@ -1,2 +1,2 @@
-export {Marshall} from './marshall';
+export {Marshall, MarshallArray} from './marshall';
 export {Unmarshall} from './unmarshall';

@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { FileHandler, getResourceManager, ResourceResponse, SimpleResourceHandler } from "$lib/base/resource";
-    import { onMount } from "svelte";
+    import { FileHandler, FileTreePanelHandler, getResourceManager, ResourceResponse, SimpleResourceHandler } from "$lib/base/resource";
+    import { getAllContexts, onMount } from "svelte";
     import * as comlink from "comlink";
     import { Emitter } from "$lib/base/events";
     import type {
@@ -12,6 +12,7 @@
     import { usePageAPI } from "../panel/apis/PageAPI";
     import path from "path";
     import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
+    import { getWM } from "../windows/WM";
     let { onResize, basePath}: { onResize: TypedEvent<void>, basePath: string} = $props();
     const resourceManager = getResourceManager();
 
@@ -35,6 +36,7 @@
         }
     }
     resourceManager.registerScheme("term", new TerminalScheme());
+    let wm = getWM();
     onMount(async () => {
         let emulatorWorker = new Worker(
             new URL("../../../emulator/emulator_worker.ts", import.meta.url),
@@ -75,6 +77,7 @@
 
         let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
         resourceManager.registerScheme("file", new FileHandler(fs));
+        resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
         papi.addTerminal("serial0", {
             textEv: terminalEmitter.event,
             onResizeNeeded: onResize,
@@ -82,6 +85,8 @@
                 serialPort.port1.postMessage({ data: dat });
             },
         });
+
+    papi.fsPromise.Resolve(fs);
 
         papi.openLink("term:///serial0", "tabs_lower");
     });

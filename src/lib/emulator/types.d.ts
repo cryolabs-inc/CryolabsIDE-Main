@@ -1,3 +1,5 @@
+import type { Disposable } from "$lib/base/disposable";
+import type { FSChange } from "$lib/base/fs/changes";
 import type { Stats } from "@zenfs/core";
 
 export interface ConnectParams {
@@ -52,9 +54,14 @@ export interface FSProviderAPI {
 
     stat(path: string): Promise<Stats>
     readLargeFile(path: string): Promise<File>;
-    writeFile(path: string, data: Uint8Array, length?: number, position?: number): Promise<number>;
+    writeFile(path: string, data: ArrayBuffer, length?: number, position?: number): Promise<number>;
     readFile(path: string, length?: number, position?: number): Promise<Uint8Array>;
     ls(path: string): Promise<FSDirent[]>;
+    watchForRefresh(refreshCb: (fsChange: FSChange)=>void): Promise<Disposable>;
+    removeEntry(path: string): Promise<void>;
+    removeDirectory(path: string, opts?: {recursive: boolean}): Promise<void>;
+    renameEntry(path: string, newPath: string): Promise<void>;
+    mkdir(path: string, opts?: {recursive: boolean}): Promise<void>;
 }
 
 export interface Connection {

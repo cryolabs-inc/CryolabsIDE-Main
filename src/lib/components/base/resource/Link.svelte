@@ -6,17 +6,24 @@
     import type { TabItem } from "../panel/TabbedPanelCtx";
     import path from "path";
     import type { Attachment } from "svelte/attachments";
+    import {type HTMLAttributes} from 'svelte/elements';
+    import { getWM } from "../windows/WM";
+    interface Props extends HTMLAttributes<HTMLDivElement> {
+        href: string;
+        target?: string;
+        children?: Snippet;
+        ariaLabel?: string;
+        isPopup?: boolean
+    } 
     let {
         href,
         children,
         ariaLabel,
         target = "_blank",
-    }: {
-        href: string;
-        target?: string;
-        children?: Snippet;
-        ariaLabel?: string;
-    } = $props();
+        isPopup = false,
+        ...divParts
+    }: Props  = $props();
+
     let rctx = useResourceLinkCtx();
     let uuid = $state(crypto.randomUUID());
     let name = $derived(path.basename(new URL(href).pathname));
@@ -29,12 +36,20 @@
             state: "none",
         },
     ] as TabItem[]);
+    let wm = getWM();
 </script>
 
-<div>
+<div {...divParts}>
     <button
         class="cursor-pointer hover:underline border-foreground/80"
         onclick={(e) => {
+            if (isPopup) {
+                wm.launchWindow(href, {openMode: "position", position: {
+                    X: e.clientX,
+                    Y: e.clientY
+                }});
+                return;
+            };
             if (e.shiftKey) {
                 rctx.dispatchEventClicked({
                     link: href,

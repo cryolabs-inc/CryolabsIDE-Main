@@ -33,6 +33,10 @@ class WebAccess2 extends WebAccessFS {
         await this.saveIndex();
         
     }
+    public get<const T extends FileSystemHandleKind | null>(kind: T | undefined, path: string): Promise<T extends 'directory' ? FileSystemDirectoryHandle : T extends 'file' ? FileSystemFileHandle : FileSystemHandle> {
+        return super.get(kind, path);
+
+    }
     async write(path: string, buffer: Uint8Array, offset: number): Promise<void> {
 
 		const inode = this.index.get(path);

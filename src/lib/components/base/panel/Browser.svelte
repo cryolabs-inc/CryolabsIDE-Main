@@ -24,8 +24,13 @@
     import path from "path";
     import type { TabItem } from "./TabbedPanelCtx";
     import { Spinner } from "$lib/components/ui/spinner";
-    import { cn } from "$lib/utils";
+    import { cn, ConstructExtendablePromise } from "$lib/utils";
     import { dndzone } from "svelte-dnd-action";
+    import ContextMenu from "$lib/components/ui/context-menu/context-menu.svelte";
+    import ContextMenuTrigger from "$lib/components/ui/context-menu/context-menu-trigger.svelte";
+    import ContextMenuContent from "$lib/components/ui/context-menu/context-menu-content.svelte";
+    import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
+    import { Emitter } from "$lib/base/events";
     let {
         target = "default",
         showTabs = true,
@@ -52,11 +57,27 @@
         }
         return items.filter((v) => v.id === selectedTabItem)[0];
     });
-    let extProm = new Promise<void>((resolve) => {
-        onMount(resolve);
+    let activeTabsChanged = new Emitter<TabItem>();
+    let tabListChanged = new Emitter<TabItem[]>();
+    $effect(()=>{
+        activeTabsChanged.emit(seled);
     });
+    $effect(()=>{
+        $state.snapshot(items);
+        tabListChanged.emit(items);
+    })
+    
+    let extProm = ConstructExtendablePromise();
+    onMount(()=>{
+        extProm.Resolve();
+        return ()=>{
+
+            activeTabsChanged.dispose();
+            tabListChanged.dispose();
+        }
+    })
     let rctx = useResourceLinkCtx();
-    rctx.onLinkClicked(({ link, target: linkTarget }) => {
+    export function tab_open({ link, target: linkTarget = target }: {link: string, target?: string})  {
         if (!linkTarget.startsWith("_") && target !== linkTarget) {
             return;
         }
@@ -82,17 +103,17 @@
         } as TabItem;
         items.push(newItem);
         selectedTabItem = newItem.id;
-    });
+    }
+    rctx.onLinkClicked(tab_open);
     let rm = getResourceManager();
+    
     async function getPanel(tab: TabItem) {
-        console.log(tab.objectURL);
         await extProm;
         tab.state = "loading";
         let resource = await rm.fetch(tab.objectURL, {
             method: "RETRPANEL",
         });
         tab.state = "complete";
-        console.log(resource.resource);
         if (resource.resource && resource.resource.type === "panel") {
             return {
                 Comp: resource.resource.data.component,
@@ -106,12 +127,26 @@
         }
         return null;
     }
+    export const tabs = ()=>{
+        return [...$state.snapshot(items)];
+    }
+    export const serialize = ()=>{
+        return ($state.snapshot(items)).filter(v=>v.objectURL.startsWith('file:///'));
+    }
+    export const deserialize = (tabs: TabItem[])=>{
+        items = tabs;
+    }
+    
+    export const onActiveTabChanged = activeTabsChanged.event;
+    export const onTabListChanged = tabListChanged.event;
 </script>
 
 {#snippet four04()}
     <div>This content was not found.</div>
 {/snippet}
 {#snippet Tab(tabItem: TabItem)}
+    <ContextMenu>
+    <ContextMenuTrigger>
     <div class="  text-white p-2">
         <div class="flex justify-center gap-2">
             {tabItem.name}
@@ -154,6 +189,11 @@
             </button>
         </div>
     </div>
+    </ContextMenuTrigger>
+    <ContextMenuContent>
+        <ContextMenuItem>Drag out to new window</ContextMenuItem>
+    </ContextMenuContent>
+    </ContextMenu>
 {/snippet}
 {#snippet TabContents(tabItem: TabItem)}
     {#await getPanel(tabItem)}
@@ -168,7 +208,7 @@
     {/await}
 {/snippet}
 <div class="flex w-full h-full flex-col relative">
-    <div class="h-fit flex flex-row">
+    <div class="h-fit flex flex-row w-full">
         {#if showTabs}
             <DraggbleItemList
                 bind:items
@@ -176,6 +216,21 @@
                 orientation="horizontal"
                 bind:selected={selectedTabItem}
                 dndZoneProps={{ type: "tabs-upper" }}
+                ondrop={e=>{
+                    if (e.dataTransfer) {
+                        let textData = e.dataTransfer.getData('text');
+                        try {
+                           let parsed =  JSON.parse(textData) as {type: "url", url: string};
+                           if (parsed.type === "url") {
+                            let u = new URL(parsed.url);
+                            let fullURL = u.href;
+                            tab_open({link: fullURL, target: "_blank"});                            
+                           }
+                        } catch {
+
+                        }
+                    }
+                }}
             ></DraggbleItemList>
         {/if}
 
