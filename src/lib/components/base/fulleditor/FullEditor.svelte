@@ -44,20 +44,19 @@
     import { setWM, WM } from "../windows/WM";
     import type { TabItem } from "../panel/TabbedPanelCtx";
     import StatusBar from "../statusbar/StatusBar.svelte";
-    let {basePath = "/"}:{basePath?: string} = $props();
+    let { basePath = "/" }: { basePath?: string } = $props();
     class FullEditorPrefs {
         lowerTabsHeight: number = 20;
         upperTabsHeight: number = 80;
         stimulusWidth: number = 80;
-        upperTabs: TabItem[] = [];
+        upperTabs: any = [];
         from(rec: Record<string, any> = {}) {
             if (rec["lowerTabsHeight"])
                 this.lowerTabsHeight = rec["lowerTabsHeight"];
             if (rec["upperTabsHeight"])
                 this.upperTabsHeight = rec["upperTabsHeight"];
             if (rec["stimulusWidth"]) this.stimulusWidth = rec["stimulusWidth"];
-            if (rec['upperTabs']) this.upperTabs = rec["upperTabs"];
-            
+            if (rec["upperTabs"]) this.upperTabs = rec["upperTabs"];
         }
         async savePrefs() {
             await Prefs.default().store("full_editor.prefs", { ...this });
@@ -114,7 +113,7 @@
     });
     let resourceManager = new ResourceManager();
     let fullEditorPrefs = new FullEditorPrefs();
-    
+
     ResourceManager.addDefaultSchemes(resourceManager);
     setResourceManager(resourceManager);
     let rc = new ResourceLinkContext();
@@ -133,19 +132,23 @@
         if (!lowerTab || !upperTab || !stimulusPane) {
             return;
         }
-        fullEditorPrefs.from(await Prefs.default().get("full_editor.prefs", {}));
-        
+        fullEditorPrefs.from(
+            await Prefs.default().get("full_editor.prefs", {}),
+        );
+
         lowerTab.resize(fullEditorPrefs.lowerTabsHeight);
         upperTab.resize(fullEditorPrefs.upperTabsHeight);
         stimulusPane.resize(fullEditorPrefs.stimulusWidth);
-        upperBrowser?.deserialize(fullEditorPrefs.upperTabs);
-        upperBrowser?.onTabListChanged(()=>{
-            if (upperBrowser) {
-                fullEditorPrefs.upperTabs = upperBrowser.serialize();
-                 fullEditorPrefs.savePrefs();
-            }
-        })
-
+        let d = papi.onAllLoaded(() => {
+            upperBrowser?.deserialize(fullEditorPrefs.upperTabs);
+            upperBrowser?.onTabListChanged(() => {
+                if (upperBrowser) {
+                    fullEditorPrefs.upperTabs = upperBrowser.serialize();
+                    fullEditorPrefs.savePrefs();
+                }
+            });
+            d.dispose();
+        });
     });
     console.log(papi);
     function newResizeHandler(val: (newSize: number) => void) {
@@ -155,60 +158,64 @@
         }
         function rh(newSize: number) {
             val(newSize);
-            postResize(newSize).then(()=>{
+            postResize(newSize).then(() => {
                 // tell user that prefs have bene saved.
             });
         }
-        
+
         return rh;
     }
 </script>
-<div class="w-full h-full flex flex-col">
-<div class="w-full h-full flex flex-row">
-    <ResizablePaneGroup direction="horizontal">
-        <ResizablePane minSize={20}>
-            {#await updItems()}
-                <div></div>
-            {:then}
-                <SidePanel bind:items={items!} selected="main-menu"></SidePanel>
-            {:catch}
-                <div>error found</div>
-            {/await}
-        </ResizablePane>
-        <ResizableHandle></ResizableHandle>
-        <ResizablePane bind:this={stimulusPane} defaultSize={80} onResize={newResizeHandler(val=>{
-            fullEditorPrefs.stimulusWidth = val;
-        })}>
-            <ResizablePaneGroup direction="vertical">
-                <ResizablePane
-                    bind:this={upperTab}
-                    defaultSize={80}
-                    onResize={newResizeHandler((ns)=>{
-                        fullEditorPrefs.upperTabsHeight = ns;
-                    })}
-                >
-                    <Browser bind:this={upperBrowser}></Browser>
-                </ResizablePane>
-                <ResizableHandle></ResizableHandle>
-                <ResizablePane
-                    bind:this={lowerTab}
-                    defaultSize={20}
-                    onResize={newResizeHandler((newSize)=>{
-                        fullEditorPrefs.lowerTabsHeight = newSize;
-                    })}
-                    minSize={20}
-                    collapsible={true}
-                >
-                    <Browser target="tabs_lower"></Browser>
-                </ResizablePane>
-            </ResizablePaneGroup>
-        </ResizablePane>
-        
-    </ResizablePaneGroup>
-    <Emulator onResize={onResize.event} {basePath}></Emulator>
-</div>
-<div>
-    <StatusBar></StatusBar>
 
+<div class="w-full h-full flex flex-col">
+    <div class="w-full h-full flex flex-row">
+        <ResizablePaneGroup direction="horizontal">
+            <ResizablePane minSize={20}>
+                {#await updItems()}
+                    <div></div>
+                {:then}
+                    <SidePanel bind:items={items!} selected="main-menu"
+                    ></SidePanel>
+                {:catch}
+                    <div>error found</div>
+                {/await}
+            </ResizablePane>
+            <ResizableHandle></ResizableHandle>
+            <ResizablePane
+                bind:this={stimulusPane}
+                defaultSize={80}
+                onResize={newResizeHandler((val) => {
+                    fullEditorPrefs.stimulusWidth = val;
+                })}
+            >
+                <ResizablePaneGroup direction="vertical">
+                    <ResizablePane
+                        bind:this={upperTab}
+                        defaultSize={80}
+                        onResize={newResizeHandler((ns) => {
+                            fullEditorPrefs.upperTabsHeight = ns;
+                        })}
+                    >
+                        <Browser bind:this={upperBrowser}></Browser>
+                    </ResizablePane>
+                    <ResizableHandle></ResizableHandle>
+                    <ResizablePane
+                        bind:this={lowerTab}
+                        defaultSize={20}
+                        onResize={newResizeHandler((newSize) => {
+                            fullEditorPrefs.lowerTabsHeight = newSize;
+                        })}
+                        minSize={20}
+                        collapsible={true}
+                    >
+                        <Browser target="tabs_lower"></Browser>
+                    </ResizablePane>
+                </ResizablePaneGroup>
+            </ResizablePane>
+        </ResizablePaneGroup>
+        <Emulator onResize={onResize.event} {basePath}></Emulator>
+    </div>
+    <div>
+        <StatusBar></StatusBar>
+    </div>
 </div>
-</div>  

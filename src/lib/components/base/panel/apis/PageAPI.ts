@@ -45,6 +45,11 @@ export class PageAPI {
     constructor(rc: ResourceLinkContext) {
         this.rc = rc;
     }
+    #onAllLoadedEmitter = new Emitter<void>();
+    emitAllLoaded() {
+        this.#onAllLoadedEmitter.emit();
+    } 
+    onAllLoaded = this.#onAllLoadedEmitter.event;
     #terminals: ({ id: string, term: PTerminal })[] = [];
     getTerminal(id: string) {
         return this.#terminals.filter(v => v.id === id)[0];

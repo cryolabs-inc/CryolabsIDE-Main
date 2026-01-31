@@ -280,6 +280,8 @@ export class FileHandler extends SimpleResourceHandler {
                             value: getRequest.resource.data.data,
                             onChangeContent: async (newC) => {
                                 await fsP.writeFile(this.getPathnameFromRequest(request), newC.buffer as ArrayBuffer, newC.length, 0);
+                                await fsP.truncate(this.getPathnameFromRequest(request), newC.byteLength);
+
                             }
                         }
                     }

@@ -131,10 +131,20 @@
         return [...$state.snapshot(items)];
     }
     export const serialize = ()=>{
-        return ($state.snapshot(items)).filter(v=>v.objectURL.startsWith('file:///'));
+        return {
+            it:  ($state.snapshot(items)).filter(v=>v.objectURL.startsWith('file:///')),
+            seledId:selectedTabItem
+        }
     }
-    export const deserialize = (tabs: TabItem[])=>{
-        items = tabs;
+    export const deserialize = (val: {it: TabItem[], seledId: string})=>{
+        if (val instanceof Array) {
+            items = val;
+            console.log("Migrating");
+            return;
+        }
+        items = val.it;
+        selectedTabItem = val.seledId;
+        
     }
     
     export const onActiveTabChanged = activeTabsChanged.event;

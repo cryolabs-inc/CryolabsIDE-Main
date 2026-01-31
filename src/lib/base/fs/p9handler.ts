@@ -147,6 +147,10 @@ class FidInfo implements Qid {
     childrenCache: Map<string, FidInfo> = new Map(); // Cache children by name
     async moveTo(oldName: string, newDfid: FidInfo, newName: string) {
         await this.fs.rename(p.resolve(this.pathId, oldName), p.resolve(newDfid.pathId, newName));
+        // Remove from old parent's cache
+        this.childrenCache.delete(oldName);
+        // Invalidate new parent's cache if the new name already existed
+        newDfid.childrenCache.delete(newName);
     }
     async link(name: string, toPath: string) {
 
@@ -241,8 +245,11 @@ class FidInfo implements Qid {
         } else {
             await this.fs.unlink(p.resolve(this.pathId, name));
         }
+        // Remove from cache after deletion
+        this.childrenCache.delete(name);
     }
     async clunk() {
+
         await this.handle?.close();
     }
     async walk(name: string): Promise<FidInfo> {
@@ -329,11 +336,12 @@ class FidInfo implements Qid {
 }
 class RawAccesHandle extends FidInfo {
     opfsHandle?: FileSystemSyncAccessHandle;
-    
+    private openMode: number = 0;
+
     private readonly BLOCK_SIZE = 65536;
-    private readonly MAX_CACHED_BLOCKS = 4096; 
+    private readonly MAX_CACHED_BLOCKS = 4096;
     private readonly READAHEAD_BLOCKS = 16;
-    
+
     private blockCache: Map<number, { buffer: Uint8Array, length: number }> = new Map();
     
     private static bufferPool: Uint8Array[] = [];
@@ -348,12 +356,65 @@ class RawAccesHandle extends FidInfo {
             RawAccesHandle.bufferPool.push(buf);
         }
     }
+    async updateMeta() {
+        let ino = webfs.index.get(this.pathId);
+        ino?.update({size: this.opfsHandle?.getSize(), mtimeMs: Math.floor(performance.now()), atimeMs: Math.floor(performance.now())});
+    }
+
+    async truncate(newSize: number): Promise<void> {
+        if (!this.opfsHandle) {
+            // If file is not open, use the base class implementation
+            await super.truncate(newSize);
+            return;
+        }
+
+        const oldSize = this.opfsHandle.getSize();
+        this.opfsHandle.truncate(newSize);
+        this.opfsHandle.flush();
+
+        // If file was shrunk, invalidate all affected blocks
+        if (newSize < oldSize) {
+            const firstAffectedBlock = Math.floor(newSize / this.BLOCK_SIZE);
+            // Remove all blocks from firstAffectedBlock onwards
+            for (const [blockNum, entry] of this.blockCache.entries()) {
+                if (blockNum >= firstAffectedBlock) {
+                    this.releaseBuffer(entry.buffer);
+                    this.blockCache.delete(blockNum);
+                }
+            }
+        } else if (newSize > oldSize) {
+            // If file was extended, invalidate the last block of the old size
+            // as it may now contain zeros
+            const lastOldBlock = Math.floor(oldSize / this.BLOCK_SIZE);
+            const entry = this.blockCache.get(lastOldBlock);
+            if (entry) {
+                this.releaseBuffer(entry.buffer);
+                this.blockCache.delete(lastOldBlock);
+            }
+        }
+
+        await this.updateMeta();
+    }
 
     async open(mode: number): Promise<void> {
         if (this.type !== 0) {
             throw new Error("cant use raw access with directories");
         }
+
+        this.openMode = mode;
         this.opfsHandle = await (await webfs.get("file", this.pathId)).createSyncAccessHandle();
+        let idx = webfs.index.get(this.pathId);
+        console.log(idx?.size);
+        idx && this.opfsHandle.truncate(idx.size);
+        console.log("Truncate?: " + ((mode & O_TRUNC) === O_TRUNC))
+        console.log(openFlagsToString(this.fs, mode));
+
+        if (mode & O_TRUNC) {
+            this.opfsHandle.truncate(0);
+            this.opfsHandle.flush();
+            this.invalidateCache();
+            await this.updateMeta();
+        }
     }
 
     async write(data: Uint8Array, position: number): Promise<{ bytesWritten: number; buffer: Uint8Array<ArrayBufferLike>; }> {
@@ -361,8 +422,20 @@ class RawAccesHandle extends FidInfo {
             throw new Error("Writing without preparing for I/O.");
         }
 
-        const startBlock = Math.floor(position / this.BLOCK_SIZE);
-        const endBlock = Math.floor((position + data.length - 1) / this.BLOCK_SIZE);
+        // Validate write permission
+        const accessMode = this.openMode & 0x3;
+        if (accessMode === 0) { // O_RDONLY
+            throw withErrno("EBADF", "File not opened for writing");
+        }
+
+        // Handle O_APPEND: always write to end of file
+        let writePosition = position;
+        if (this.openMode & O_APPEND) {
+            writePosition = this.opfsHandle.getSize();
+        }
+
+        const startBlock = Math.floor(writePosition / this.BLOCK_SIZE);
+        const endBlock = Math.floor((writePosition + data.length - 1) / this.BLOCK_SIZE);
         for (let b = startBlock; b <= endBlock; b++) {
             const entry = this.blockCache.get(b);
             if (entry) {
@@ -371,9 +444,8 @@ class RawAccesHandle extends FidInfo {
             }
         }
 
-        let bytesWritten = this.opfsHandle.write(data, { at: position });
-        let idx = webfs.index.get(this.pathId);
-        idx?.update({ size: this.opfsHandle.getSize(), mtimeMs: Date.now() });
+        let bytesWritten = this.opfsHandle.write(data, { at: writePosition });
+        await this.updateMeta();
 
         return { bytesWritten, buffer: data };
     }
@@ -383,6 +455,12 @@ class RawAccesHandle extends FidInfo {
 
         if (!this.opfsHandle) {
             throw new Error("Reading without preparing for I/O.");
+        }
+
+        // Validate read permission
+        const accessMode = this.openMode & 0x3;
+        if (accessMode === O_WRONLY) {
+            throw withErrno("EBADF", "File not opened for reading");
         }
 
         const startBlock = Math.floor(position / this.BLOCK_SIZE);
@@ -467,6 +545,12 @@ class RawAccesHandle extends FidInfo {
             this.releaseBuffer(entry.buffer);
         }
         this.blockCache.clear();
+    }
+
+    async sync(): Promise<void> {
+        if (this.opfsHandle) {
+            this.opfsHandle.flush();
+        }
     }
 
     async clunk(): Promise<void> {
@@ -626,7 +710,7 @@ function getHandler() {
                         ["u64", BigInt(st.size)/8192n],
                         ['u64', BigInt(st.atimeMs) / 1000n],
                         ['u64', BigInt(st.atimeNs)],
-                        ['u64', BigInt(st.mtimeMs) / 1000n],
+                        ['u64', BigInt(Math.floor(Number(st.mtimeMs))) / 1000n],
                         ["u64", BigInt(st.mtimeNs)],
                         ["u64", BigInt(st.ctimeMs) / 1000n],
                         ['u64', BigInt(st.ctimeNs)],

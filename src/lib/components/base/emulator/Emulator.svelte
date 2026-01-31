@@ -87,7 +87,8 @@
         });
 
     papi.fsPromise.Resolve(fs);
-
         papi.openLink("term:///serial0", "tabs_lower");
+        papi.emitAllLoaded();
+
     });
 </script>

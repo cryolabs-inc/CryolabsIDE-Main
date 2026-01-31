@@ -54,7 +54,7 @@ export interface FSProviderAPI {
 
     stat(path: string): Promise<Stats>
     readLargeFile(path: string): Promise<File>;
-    writeFile(path: string, data: ArrayBuffer, length?: number, position?: number): Promise<number>;
+    writeFile(path: string, data: ArrayBuffer, length?: number, position?: number, openMode?: number): Promise<number>;
     readFile(path: string, length?: number, position?: number): Promise<Uint8Array>;
     ls(path: string): Promise<FSDirent[]>;
     watchForRefresh(refreshCb: (fsChange: FSChange)=>void): Promise<Disposable>;
@@ -62,6 +62,7 @@ export interface FSProviderAPI {
     removeDirectory(path: string, opts?: {recursive: boolean}): Promise<void>;
     renameEntry(path: string, newPath: string): Promise<void>;
     mkdir(path: string, opts?: {recursive: boolean}): Promise<void>;
+    truncate(path: string, nwSize: number): Promise<void>;
 }
 
 export interface Connection {

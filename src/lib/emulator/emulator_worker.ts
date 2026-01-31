@@ -378,7 +378,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     async emitGlobal(path: string, method: string, isEntryChange: boolean = false) {
         globChEmitter.emit({ path, method, isEntryChange });
     }
-    async writeFile(path: string, data: ArrayBuffer, length: number, position: number): Promise<number> {
+    async writeFile(path: string, data: ArrayBuffer, length: number, position: number, openMode = fsP.constants.O_TRUNC): Promise<number> {
         let isNewEntry = false;
         try {
             await fsP.stat(path);
@@ -389,9 +389,11 @@ class FSProviderInternalImpl implements FSProviderAPI {
         return this.withLock(path, async () => {
             length ??= data.byteLength;
             position ??= 0;
-            let fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT);
+            let fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT | openMode);
+
             let { bytesWritten } = await fh.write(new Uint8Array(data), { length, position });
             await fh.close();
+
             return bytesWritten;
         });
     }
@@ -459,10 +461,15 @@ class FSProviderInternalImpl implements FSProviderAPI {
             await fsP.mkdir(path, opts);
         })
     }
+    async truncate(path: string, nwSize: number): Promise<void> {
+        return this.withLock(path, async()=>{
+            await fsP.truncate(path, nwSize);
+        })
+    }
 }
 function downloadV86(getSrvRoot: () => string) {
 
-    return import(/* vite-treat-as-asset */ getSrvRoot() + 'libv86.mjs');
+    return import(/* @vite-ignore */ (getSrvRoot() + 'libv86.mjs'));
 }
 
 class Connection implements Connection {
@@ -558,7 +565,7 @@ async function workerCode(getSrvRoot: () => string) {
             if (!r.ok) {
                 throw new Error("Failed to download disk image.");
             }
-            let diskBuffer = new ArrayBuffer(parseInt(r.headers.get("Content-Length") ?? "313774080"));
+            let diskBuffer = new ArrayBuffer(parseInt(r.headers.get("Content-Length") ?? "536870912"));
             let bytes = new Uint8Array(diskBuffer);
             let b = r.body;
             if (!b) {
@@ -616,7 +623,8 @@ async function workerCode(getSrvRoot: () => string) {
     let initArgsB64 = initArgs.map(v => btoa(v));
     let final = initArgsB64.join(" ");
     let hda = disk_storage && {
-        buffer: disk_storage
+        buffer: disk_storage,
+        size: disk_storage.byteLength
     };
 
     let v86_startupoptions = {
