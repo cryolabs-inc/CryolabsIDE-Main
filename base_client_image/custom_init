@@ -6,11 +6,9 @@ depend() {
 }
 
 start() {
-    # just tell the serial consoles we up baby
-    
     ip link set eth0 up
     ip link set lo up
-    mount -t 9p host9p /root
+    mount -t 9p -o cache=none,directio host9p /root
     udhcpc
     ls /root
     ebegin "Sending the serial consoles a sync notice to sync a save state"

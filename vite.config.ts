@@ -9,7 +9,14 @@ export default defineConfig({ plugins: [tailwindcss(), sveltekit(), commonjs(), 
         "path": "path-browserify"
     },
 },server: {
-    hmr: false
+    hmr: false,
+    allowedHosts: ["disc.hs.vc"]
 }, "worker": {
     format: "es"
-}});
+},
+   preview: {
+	allowedHosts: ["disc.hs.vc"]
+}
+
+
+});
