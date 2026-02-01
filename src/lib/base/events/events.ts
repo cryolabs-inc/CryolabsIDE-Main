@@ -36,7 +36,7 @@ export class Emitter<T> implements Disposable {
 
   emit(data: T): boolean {
     if (!this.eventTarget) {
-      throw new Error("Cannot call after dispose()");
+      return false;
     }
     let ce =  new CustomEvent<T>(EVENT_NAME, { detail: data });
     this.eventTarget.dispatchEvent(

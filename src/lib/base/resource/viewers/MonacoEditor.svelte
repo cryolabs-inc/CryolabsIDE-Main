@@ -1,31 +1,95 @@
 <script lang="ts">
-    import * as monaco from 'monaco-editor';
-  
-    import { onMount } from 'svelte';
-    let {value: value, onChangeContent = ()=>{}}: {value: Blob, onChangeContent?: (newBuffer: Uint8Array)=>void} = $props();
+    import { usePageAPI } from "$lib/components/base/panel/apis/PageAPI";
+    import * as monaco from "monaco-editor";
+    import * as comlink from "comlink";
+    import { onMount, type Component } from "svelte";
+    import type { Disposable } from "$lib/base/disposable";
+    import TooLarge from "./edit/TooLarge.svelte";
+    import { cn } from "$lib/utils";
+    type LF<T> =
+        T extends Component<infer Props>
+            ? {
+                  component: T;
+                  props: Props;
+              }
+            : never;
+    let {
+        value: value,
+        onChangeContent = () => {},
+        filePath,
+    }: {
+        value: Blob;
+        onChangeContent?: (newBuffer: Uint8Array) => void;
+        filePath: string;
+    } = $props();
     let dec = new TextDecoder();
     let enc = new TextEncoder();
-    
-    let divElem = $state<HTMLDivElement>();
-    
-    onMount(async ()=>{
-        if (!divElem) return;
-        let ab = await value.arrayBuffer();
-        let u8 = new Uint8Array(ab);
-        
-        let edit = monaco.editor.create(divElem, {value: dec.decode(u8), language: value.type});
-        
-        let model = edit.getModel();
-        
-        if (model){
 
-            model.onDidChangeContent((e)=>{
-                let val = model.getValue();
-                onChangeContent(enc.encode(val));
-            })
+    let divElem = $state<HTMLDivElement>();
+    let papi = usePageAPI();
+    let heuristicNeeded = $state(true);
+    let heuristicAlert = $state<LF<any>>();
+    onMount(() => {
+        if (!divElem) return;
+        if (value.size > 10 * 1024) {
+            (async () => {
+                heuristicNeeded = true;
+                heuristicAlert = {
+                    component: TooLarge,
+                    props: {
+                        fileBuffer: new Uint8Array(await value.arrayBuffer()),
+                    },
+                } as LF<typeof TooLarge>;
+            })();
+            return;
         }
+        heuristicNeeded = false;
+        let edit = monaco.editor.create(divElem, {
+            language: value.type,
+            automaticLayout: true,
+            theme: "vs-dark",
+        });
+        let watcher: Disposable | undefined = undefined;
+        (async () => {
+            let fsp = await papi.fs;
+            let watcherId = crypto.randomUUID();
+            await fsp.assignId(watcherId);
+            watcher = await fsp.watchForRefresh(
+                comlink.proxy(async (fsChange) => {
+                    console.log(fsChange.srcId);
+                    if (fsChange.srcId === watcherId) {
+                        return;
+                    }
+                    if (fsChange.path === filePath) {
+                        edit.setValue(dec.decode(await fsp.readFile(filePath)));
+                    }
+                }),
+            );
+            let ab = await value.arrayBuffer();
+            let u8 = new Uint8Array(ab);
+
+            let model = edit.getModel();
+
+            if (model) {
+                model.onDidChangeContent((e) => {
+                    if (!e.isFlush) {
+                        let val = model.getValue();
+                        onChangeContent(enc.encode(val));
+                    }
+                });
+            }
+            model?.setValue(dec.decode(u8));
+        })();
+        return () => {
+            edit.dispose();
+            watcher?.dispose();
+        };
     });
 </script>
-<div class="h-full w-full" bind:this={divElem}>
 
-</div>
+    <div class={cn("h-full w-full hidden", !heuristicNeeded && "block")} bind:this={divElem}></div>
+    {#if heuristicAlert}
+    <heuristicAlert.component {...heuristicAlert.props}></heuristicAlert.component>
+    <div>Checking file...</div>
+
+    {/if}

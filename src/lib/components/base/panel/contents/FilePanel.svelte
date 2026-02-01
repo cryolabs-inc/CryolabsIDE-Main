@@ -5,12 +5,14 @@
 
         let papi = usePageAPI();
 
+    let b = $state<Browser>();
     onMount(()=>{
-        papi.openLink("term:///serial0", "file-tree");
-    });
-
+        if (!b)
+            throw new Error("Failed to mount file tree properly.");
+        b.tab_open({link: "file-tree:///", target: "file-tree"})
+    })
 </script>
-<Browser showTabs={false} showAddressBar={false} target="file-tree" >
+<Browser bind:this={b} showTabs={false} showAddressBar={false} target="file-tree" >
 
 
 </Browser>

@@ -8,5 +8,4 @@ echo 'agetty_options="--autologin root"' >> /etc/conf.d/agetty.ttyS0
 echo 'agetty_options="--autologin root"' >> /etc/conf.d/agetty
 echo 'agetty_options="--autologin root"' >> /etc/conf.d/agetty.tty1
 sed -i '/tty1/d' /etc/inittab
-rc-update add agetty.tty1 default
 rc-update add agetty.ttyS0 default

@@ -1,6 +1,7 @@
 <script lang="ts">
     import Link from "../../resource/Link.svelte";
-
+    import { getWM } from "../../windows/WM";
+    let wm = getWM();
     
 
 </script>
@@ -18,5 +19,8 @@
     </Link>
     <Link href="term:///serial0" target="tabs_lower">
         open serial0
+    </Link>
+    <Link href="term:///serial0" target="_blank" isPopup={true}> 
+        open serial0 in new window.
     </Link>
 </div>
