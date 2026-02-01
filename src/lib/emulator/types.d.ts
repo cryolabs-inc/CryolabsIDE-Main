@@ -51,7 +51,7 @@ interface FSDirent {
  * This API is thread-safe. i.e. this can be accessed safely from mulitple threads and one VM is guaranteed to use the underlying fs with thread-safety.
  */
 export interface FSProviderAPI {
-
+    assignId(id: string): Promise<void>
     stat(path: string): Promise<Stats>
     readLargeFile(path: string): Promise<File>;
     writeFile(path: string, data: ArrayBuffer, length?: number, position?: number, openMode?: number): Promise<number>;
@@ -63,6 +63,7 @@ export interface FSProviderAPI {
     renameEntry(path: string, newPath: string): Promise<void>;
     mkdir(path: string, opts?: {recursive: boolean}): Promise<void>;
     truncate(path: string, nwSize: number): Promise<void>;
+    createFile(path: string): Promise<void>;
 }
 
 export interface Connection {
@@ -77,3 +78,17 @@ export interface WorkerHandlerAPI {
     
     connect(param: ConnectParams): Promise<Connection>;
 }
+type GetWorkerPortRequest = {
+    type: "GetWorkerPortRequest"
+};
+type GetWorkerPortResponse = {
+    type: "GetWorkerPortResponse",
+    mode: "sessionleader"|"sessionchild",
+    sessionLeaderLock?: string,
+    msgPort: MessagePort
+}
+type LockAcquired = {
+    type: "LockAcquired"
+}
+type WorkerMessageData = GetWorkerPortRequest|GetWorkerPortResponse|LockAcquired;
+type Msg = MessageEvent<WorkerMessageData>;

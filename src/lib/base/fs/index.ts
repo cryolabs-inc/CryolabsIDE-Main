@@ -9,11 +9,14 @@ let rot = await navigator.storage.getDirectory();
 let rootDir = await rot.getDirectoryHandle('files1', {create: true});
 class WebAccess2 extends WebAccessFS {
     idxHandle: FileSystemFileHandle;
+    
     constructor(rootHandle: FileSystemDirectoryHandle, indexHandle: FileSystemFileHandle, disableHandleCache = false) {
         super(rootHandle, disableHandleCache);
         this.idxHandle = indexHandle;
     }
+    
     async initialize() {
+        this.index.maxSize
         let fil = await this.idxHandle.getFile();
         if (fil.size === 0) {
             return; // no data.
@@ -33,7 +36,8 @@ class WebAccess2 extends WebAccessFS {
         await this.saveIndex();
         
     }
-    public get<const T extends FileSystemHandleKind | null>(kind: T | undefined, path: string): Promise<T extends 'directory' ? FileSystemDirectoryHandle : T extends 'file' ? FileSystemFileHandle : FileSystemHandle> {
+    public async get<const T extends FileSystemHandleKind | null>(kind: T | undefined, path: string): Promise<T extends 'directory' ? FileSystemDirectoryHandle : T extends 'file' ? FileSystemFileHandle : FileSystemHandle> {
+        
         return super.get(kind, path);
 
     }
@@ -77,6 +81,7 @@ class WebAccess2 extends WebAccessFS {
 		this.index.set(path, inode);
 
     }
+    
     async _mkdir(path: string): Promise<void> {
         await super._mkdir(path);
         await this.saveIndex();

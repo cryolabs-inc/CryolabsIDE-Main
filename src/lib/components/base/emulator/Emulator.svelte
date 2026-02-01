@@ -13,6 +13,7 @@
     import path from "path";
     import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
     import { getWM } from "../windows/WM";
+    import { getEmulatorPort } from "$lib/emulator/emulator";
     let { onResize, basePath}: { onResize: TypedEvent<void>, basePath: string} = $props();
     const resourceManager = getResourceManager();
 
@@ -38,19 +39,8 @@
     resourceManager.registerScheme("term", new TerminalScheme());
     let wm = getWM();
     onMount(async () => {
-        let emulatorWorker = new Worker(
-            new URL("../../../emulator/emulator_worker.ts", import.meta.url),
-            { type: "module" },
-        );
         let terminalEmitter = new Emitter<string>();
-
-        let mainWorkerChannel = new MessageChannel();
-        mainWorkerChannel.port1.start();
-        await new Promise((resolve) => {
-            emulatorWorker.onmessage = resolve;
-        });
-        emulatorWorker.postMessage({start: true, basePath}, [mainWorkerChannel.port2]);
-        let api = comlink.wrap(mainWorkerChannel.port1) as WorkerHandlerAPI;
+        let api = comlink.wrap(await getEmulatorPort(basePath)) as WorkerHandlerAPI;
         let serialPort = new MessageChannel();
         serialPort.port1.onmessage = (e) => {
             let evt = e as MessageEvent<{ type: string; data: string }>;

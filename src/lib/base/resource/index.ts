@@ -7,6 +7,8 @@ import path from "path-browserify";
 import { Errno, type Exception } from "kerium";
 import type { FSProviderAPI } from '$lib/emulator/types';
 import FileTreeViewer from "./viewers/file/FileTreeViewer.svelte";
+import HtmlViewer from "./viewers/HtmlViewer.svelte";
+import { O_TRUNC } from "@zenfs/core/constants.js";
 // --- Resource Types ---
 
 
@@ -279,10 +281,11 @@ export class FileHandler extends SimpleResourceHandler {
                         props: {
                             value: getRequest.resource.data.data,
                             onChangeContent: async (newC) => {
-                                await fsP.writeFile(this.getPathnameFromRequest(request), newC.buffer as ArrayBuffer, newC.length, 0);
+                                await fsP.writeFile(this.getPathnameFromRequest(request), newC.buffer as ArrayBuffer, newC.length, 0, O_TRUNC);
                                 await fsP.truncate(this.getPathnameFromRequest(request), newC.byteLength);
 
-                            }
+                            },
+                            filePath: this.getPathnameFromRequest(request)
                         }
                     }
                 }
@@ -296,22 +299,17 @@ export class FileHandler extends SimpleResourceHandler {
     async doGet(request: Request): Promise<ResourceResponse> {
         let fsPath = this.getPathnameFromRequest(request);
         let fsP = this.fsAPI;
-        let newC = await fsP.stat(fsPath);
 
         try {
+        let newC = await fsP.stat(fsPath);
+
             let readBuffer = (await fsP.readFile(fsPath, newC.size, 0)) as Uint8Array<ArrayBuffer>;
             let mt = (await fileTypeFromBuffer(readBuffer))?.mime || Mime.getType(path.extname(fsPath))   || "";
             return ResourceResponse.ok("data", {
                 data: new Blob([readBuffer], { type: mt  })
             });
         } catch (e) {
-            let ex = e as Exception;
-            if (ex.errno === Errno.ENOENT || ex.errno === Errno.EISDIR) {
-                return ResourceResponse.notFound();
-            }
-            else {
-                throw ex;
-            }
+            return ResourceResponse.notFound();
         }
     }
     async doPut(request: Request): Promise<ResourceResponse> {
@@ -354,7 +352,15 @@ class Sample extends RawResourceHandler {
         })
     }
 }
-
+export class AboutManager extends SimpleResourceHandler {
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+        let url = new URL(request.url);
+        if (url.pathname === "blank") {
+            return ResourceResponse.ok<[typeof HtmlViewer]>("panel", {component: HtmlViewer, props: {html: ""}});
+        }
+        return ResourceResponse.notFound();
+    }
+}
 // --- Resource Manager ---
 
 export class ResourceManager {
@@ -389,7 +395,8 @@ export class ResourceManager {
         resourceManager
             .registerScheme("http", new HttpHandler())
             .registerScheme("https", new HttpHandler())
-            .registerScheme("sample", new Sample());
+            .registerScheme("sample", new Sample())
+            .registerScheme('about', new AboutManager());
     }
 }
 

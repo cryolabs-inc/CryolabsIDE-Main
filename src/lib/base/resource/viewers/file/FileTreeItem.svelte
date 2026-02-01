@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import type { FileEntry, FT } from "./file";
-    import type { TreeDataProvider } from "$lib/base/trees/tree";
+    import { FileEntry, type FT } from "./file";
+    import type { TreeDataProvider, TreeItem } from "$lib/base/trees/tree";
     import FileTreeItem from "./FileTreeItem.svelte";
     import { cn } from "$lib/utils";
     import Link from "$lib/components/base/resource/Link.svelte";
@@ -34,8 +34,22 @@
         showHiddenEntries?: boolean;
     } = $props();
     let childrenTreeItems = $state<FileEntry[] | null>(null);
+    let toShowInOrder = $derived<FileEntry[]|null>(childrenTreeItems && childrenTreeItems.slice().sort((a,b)=>a.prio-b.prio));
     let label = $derived(isRootDir ? tdp.rootLabel : ftreeItem.label);
     let dirs = $state<HTMLInputElement>();
+    let isSelected = $state<boolean>(false);
+    let contextMenuActions = $derived.by(() => {
+        // Get all selected entries
+        const selectedEntries = tdp.allEntries.filter(e => tdp.selectedEntries.has(e.filePath));
+
+        // If current item is selected and there are multiple selections, use those
+        if (isSelected && selectedEntries.length > 0) {
+            return tdp.getContextMenuActions(selectedEntries);
+        }
+
+        // Otherwise, use just this item's actions
+        return tdp.getContextMenuActions([ftreeItem]);
+    });
     $effect(()=>{
         if (dirs) {
             dirs.focus();
@@ -109,7 +123,9 @@
         
     }
     onMount(() => {
-        
+        // Register this entry for range selection
+        tdp.registerEntry(ftreeItem);
+
         tdp.onStateShouldChange(({path, state})=>{
             if (path === ftreeItem.filePath) {
                 if (state === "rename") {
@@ -117,9 +133,16 @@
                 }
             }
         });
+
+        tdp.onSelected(({selectedPaths})=>{
+            isSelected = selectedPaths.has(ftreeItem.filePath);
+        });
+
         let disp: Disposable | undefined = undefined;
         (async () => {
-            childrenTreeItems = await tdp.getChildren(ftreeItem);
+            let interm = await tdp.getChildren(ftreeItem);
+            if (!interm) return;
+            childrenTreeItems = interm.slice().sort((a, b)=>{return a.prio - b.prio}) as FileEntry[];
             disp = await tdp.fsApi.watchForRefresh(
                 comlink.proxy(async (fsc) => {
                     if (fsc.isEntryChange && fsc.path === ftreeItem.filePath) {
@@ -130,6 +153,7 @@
         })();
         return () => {
             if (disp) {
+                console.log("disposing.");
                 disp.dispose();
             }
         };
@@ -138,9 +162,10 @@
 </script>
 
 {#snippet childrenLst()}
-    {#if childrenTreeItems !== null}
+    {#if toShowInOrder !== null}
         <ul>
-            {#each childrenTreeItems as ti (ti.filePath)}
+            {#each toShowInOrder as ti (ti.filePath)}
+                {#if !ti.isHidden || showHiddenEntries}
                 <li
                     class={cn(
                         !showHiddenEntries && ti.isHidden && "hidden",
@@ -155,6 +180,7 @@
                         bind:showHiddenEntries
                     ></FileTreeItem>
                 </li>
+                {/if}
             {/each}
         </ul>
     {/if}
@@ -176,7 +202,10 @@
         {:else}
         <button
             type="button"
-            class="border-l-2 border-foreground/80 px-1 flex flex-row justify-between"
+            class={cn(
+                "border-l-2 border-foreground/80 px-1 flex flex-row justify-between w-full transition-colors",
+                isSelected && "bg-accent text-accent-foreground"
+            )}
             onclick={(e) => {
                 let cp = e.composedPath();
                 let actionElement: HTMLDivElement | null = null;
@@ -188,7 +217,16 @@
                         }
                     }
                 }
-                if (!actionElement) tdp.changeSelected(ftreeItem);
+                if (!actionElement) {
+                    // Determine selection mode based on modifier keys
+                    let mode: 'single' | 'add' | 'range' = 'single';
+                    if (e.ctrlKey || e.metaKey) {
+                        mode = 'add';
+                    } else if (e.shiftKey) {
+                        mode = 'range';
+                    }
+                    tdp.changeSelected(ftreeItem, mode);
+                }
                 else {
                     let dattrib = actionElement.getAttribute("data-action")!;
                     let theAction = ftreeItem.actions.filter(
@@ -198,54 +236,79 @@
                 }
             }}
         >
-            <div class="flex flex-row">
-
-                <div>
-                    <ChevronDown class="hidden group-data-[state=open]:block"
-                    ></ChevronDown>
-                    <ChevronUp class="hidden group-data-[state=closed]:block"
-                    ></ChevronUp>
-                </div>
-                {#if ftreeItem.link}
-                    <Link
-                        role="directory"
-                        ondragstart={async (e) => {
-                            e.dataTransfer?.setData(
-                                "text",
-                                JSON.stringify({
-                                    type:  "url",
-                                    url: `file://${ftreeItem.filePath}`
-                                }),
-                            );
-                        }}
-                        draggable={!isRenaming}
-                        href={ftreeItem.link.href}
-                        target={"_blank"}
-                    >
-                        {ftreeItem.label}
-                    </Link>
-                {:else}
-                    <div
-                        role="directory"
-                        draggable={!isRenaming}
-                        
-                        ondragstart={(e) => {
-                            if (!e.dataTransfer) return;
-                            if (e.target instanceof HTMLDivElement) {
-                                e.dataTransfer.setData(
+            <div class="flex flex-row items-center gap-1 w-full justify-between">
+                <div class="flex flex-row items-center gap-1">
+                    <div>
+                        <ChevronDown class="hidden group-data-[state=open]:block"
+                        ></ChevronDown>
+                        <ChevronUp class="hidden group-data-[state=closed]:block"
+                        ></ChevronUp>
+                    </div>
+                    {#if ftreeItem.link}
+                        <Link
+                            role="directory"
+                            ondragstart={async (e) => {
+                                e.dataTransfer?.setData(
                                     "text",
                                     JSON.stringify({
-                                        type: "url",
-                                        url: new URL(`file://${ftreeItem.filePath}`)
+                                        type:  "url",
+                                        url: `file://${ftreeItem.filePath}`
                                     }),
                                 );
-                            }
-                        }}
-                        
-                    >
-                        {label}
+                            }}
+                            draggable={!isRenaming}
+                            href={ftreeItem.link.href}
+                            target={"_blank"}
+                        >
+                            {ftreeItem.label}
+                        </Link>
+                    {:else}
+                        <div
+                            role="directory"
+                            draggable={!isRenaming}
+
+                            ondragstart={(e) => {
+                                if (!e.dataTransfer) return;
+                                if (e.target instanceof HTMLDivElement) {
+                                    e.dataTransfer.setData(
+                                        "text",
+                                        JSON.stringify({
+                                            type: "url",
+                                            url: new URL(`file://${ftreeItem.filePath}`)
+                                        }),
+                                    );
+                                }
+                            }}
+
+                        >
+                            {label}
+                        </div>
+                    {/if}
+                </div>
+                    <div class="flex flex-row gap-1">
+                        {#each ftreeItem.actions as act (act.id)}
+                            <div
+                                role="button"
+                                tabindex="0"
+                                class="hover:text-accent-foreground/80 cursor-pointer"
+                                data-action={act.id}
+                                title={act.label}
+                                onclick={(e)=>{
+                                    e.stopPropagation();
+                                    act.callback(tdp, ftreeItem, e);
+                                }}
+                                onkeydown={(e)=>{
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        act.callback(tdp, ftreeItem, e);
+                                    }
+                                }}
+                            >
+                                <act.icon {...act.props}></act.icon>
+                            </div>
+                        {/each}
                     </div>
-                {/if}
             </div>
             <!-- {#if ftreeItem.actions}
                 {#each ftreeItem.actions as act (act.label)}
@@ -282,7 +345,7 @@
             {#if childrenTreeItems !== null}
                 <Collapsible
                     class="w-full"
-                    disabled={isRootDir || !childrenTreeItems}
+                    disabled={!childrenTreeItems}
                     open={true}
                 >
                     <CollapsibleTrigger
@@ -306,11 +369,17 @@
                 >Show hidden files</ContextMenuCheckboxItem
             >
             <ContextMenuSeparator></ContextMenuSeparator>
-            <ContextMenuLabel>Entry options</ContextMenuLabel>
-            {#if ftreeItem.actions.length === 0}
+            <ContextMenuLabel>
+                {#if isSelected && tdp.selectedEntries.size > 1}
+                    {tdp.selectedEntries.size} items selected
+                {:else}
+                    Entry options
+                {/if}
+            </ContextMenuLabel>
+            {#if contextMenuActions.length === 0}
                 <div class="text-sm bg-accent-foreground/10">(No entry options available.)</div>
             {/if}
-            {#each ftreeItem.actions as ac(ac.id)}
+            {#each contextMenuActions as ac(ac.id)}
                 <ContextMenuItem onclick={ac.callback.bind(null, tdp, ftreeItem)}>{ac.label}</ContextMenuItem>
             {/each}
         </ContextMenuContent>

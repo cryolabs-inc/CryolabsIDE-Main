@@ -7,6 +7,8 @@ import { O_APPEND, O_EXCL, O_RDWR, O_TRUNC, O_WRONLY, S_IFDIR, S_IFMT, S_IFREG }
 import { Exception, withErrno } from 'kerium';
 import { DirType } from '@zenfs/core/vfs/dir.js';
 import { fsP, webfs } from '.';
+import type { FSChange } from './changes';
+import type { Emitter } from '../events';
 enum p9_qid_t {
     P9_QTDIR = 0x80,
     P9_QTAPPEND = 0x40,
@@ -145,6 +147,15 @@ class FidInfo implements Qid {
     parentHandle: FidInfo | null = null;
     buffer: Uint8Array = new Uint8Array();
     childrenCache: Map<string, FidInfo> = new Map(); // Cache children by name
+    changeEmitter: Emitter<FSChange>;
+    async emitChange(path: string, method: string, isEntryChange: boolean) {
+        console.log("chemitter", {path, method, isEntryChange});
+        this.changeEmitter.emit({
+            path,
+            method,
+            isEntryChange
+        });
+    }
     async moveTo(oldName: string, newDfid: FidInfo, newName: string) {
         await this.fs.rename(p.resolve(this.pathId, oldName), p.resolve(newDfid.pathId, newName));
         // Remove from old parent's cache
@@ -170,14 +181,14 @@ class FidInfo implements Qid {
     }
     constructor(fs: typeof import('@zenfs/core').fs.promises, {
         version, path, pathId, type
-    }: QidWithPath, parentHandle: FidInfo | null = null) {
+    }: QidWithPath, parentHandle: FidInfo | null = null, emitter: Emitter<FSChange>) {
         this.type = type;
         this.version = version;
         this.path = path;
         this.fs = fs;
         this.pathId = pathId;
         this.parentHandle = parentHandle;
-
+        this.changeEmitter =emitter;
     }
     async readlink() {
         return await this.fs.readlink(this.pathId);
@@ -186,6 +197,7 @@ class FidInfo implements Qid {
         let symlinkPath = p.resolve(this.pathId, name);
         await this.fs.symlink(tgt, symlinkPath);
         await this.fs.chown(symlinkPath, 0, gid);
+        this.emitChange(this.pathId, "symlink", true);
         return this.walk(name);
     }
     async mknod() {
@@ -194,6 +206,7 @@ class FidInfo implements Qid {
     async mkdir(name: string, mode: number, gid: number) {
         await this.fs.mkdir(p.resolve(this.pathId, name), {mode});
         await this.fs.chown(p.resolve(this.pathId, name), 0, gid);
+        this.emitChange(this.pathId, "mkdir", true);
     }
     async open(mode: number) {
         let { fs } = this;
@@ -247,6 +260,7 @@ class FidInfo implements Qid {
         }
         // Remove from cache after deletion
         this.childrenCache.delete(name);
+        this.emitChange(this.pathId, "rmdir", true);
     }
     async clunk() {
 
@@ -277,9 +291,9 @@ class FidInfo implements Qid {
 
         let newFidInfo: FidInfo;
         if ((stats.mode & S_IFMT) === S_IFREG) {
-            newFidInfo = new RawAccesHandle(this.fs, qid, this);
+            newFidInfo = new RawAccesHandle(this.fs, qid, this, this.changeEmitter);
         } else {
-            newFidInfo = new FidInfo(this.fs, qid, this);
+            newFidInfo = new FidInfo(this.fs, qid, this, this.changeEmitter);
         }
 
         // Store child in cache
@@ -299,7 +313,7 @@ class FidInfo implements Qid {
         let beforeDat: Uint8Array|null = null;
         
         let a =  await this.handle.write(data, { position, length: data.length});
-        
+        this.emitChange(this.pathId, "write" ,false);
         return a;
     }
     async sync() {
@@ -324,6 +338,7 @@ class FidInfo implements Qid {
         await fs.writeFile(filePath, "");
         await fs.chmod(filePath, mode);
         await fs.chown(filePath, 0, gid);
+        this.emitChange(this.pathId, "create", true);
         return await this.walk(name);
     }
     getHandle() {
@@ -446,7 +461,7 @@ class RawAccesHandle extends FidInfo {
 
         let bytesWritten = this.opfsHandle.write(data, { at: writePosition });
         await this.updateMeta();
-
+        this.emitChange(this.pathId, "write", false);
         return { bytesWritten, buffer: data };
     }
 
@@ -568,14 +583,14 @@ function fmtQid(qid: Qid) {
         ["u64", qid.path]
     ]);
 }
-async function getRootFidInfo(fs: typeof import('@zenfs/core').fs.promises) {
+async function getRootFidInfo(fs: typeof import('@zenfs/core').fs.promises, emitter: Emitter<FSChange>) {
     let fa = await fs.stat('/');
-    let fidInfo = new FidInfo(fs, { type: P9_QTDIR, pathId: "/", path: BigInt(fa.ino), version: 0 }, null);
+    let fidInfo = new FidInfo(fs, { type: P9_QTDIR, pathId: "/", path: BigInt(fa.ino), version: 0 }, null, emitter);
     return fidInfo;
 
 }
 
-function getHandler() {
+function getHandler(chEmitter: Emitter<FSChange>) {
     let fids: Record<number, FidInfo> = {};
     let tagsFlushed: Set<number> = new Set();
     let msize = 0;
@@ -867,7 +882,7 @@ function getHandler() {
                     });
                     console.info(`[INFO] 9p session established for ${uname}, uid: ${n_uname}`);
                     if (!rootFidInfo) {
-                        rootFidInfo = await getRootFidInfo(fs);
+                        rootFidInfo = await getRootFidInfo(fs, chEmitter);
                     }
                     fids[fid] = rootFidInfo;
                     methodSpecific = fmtQid(fids[fid].asQid());

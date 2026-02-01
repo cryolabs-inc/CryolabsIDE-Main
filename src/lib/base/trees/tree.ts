@@ -1,5 +1,5 @@
 import type { Component, ComponentProps } from "svelte";
-interface Action<T, TProps extends Record<string,any> = ComponentProps<Component>> {
+export interface Action<T, TProps extends Record<string,any> = ComponentProps<Component>> {
     icon?: Component<TProps,any>;
     props?: TProps;
     label: string;
@@ -14,6 +14,7 @@ export class TreeItem<T extends Component<any, any, string> = Component> {
     isHidden: boolean = false;
     link?: {href: string, target?: string};
     actions: Action< any>[] = [];
+    prio: number = 0;
     constructor(label: string, tooltip: string) {
         this.label = label;
         this.tooltip = tooltip;
@@ -21,6 +22,7 @@ export class TreeItem<T extends Component<any, any, string> = Component> {
 }
 export interface TreeDataProvider<Dep> {
     rootLabel?: string
+    rootActions?: Action<Dep>[];
     getTreeItem(el: Dep): TreeItem;
     getChildren(el: Dep): Promise<Dep[]|null>;
     

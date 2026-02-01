@@ -35,25 +35,27 @@
         target = "default",
         showTabs = true,
         showAddressBar = false,
-        onNewTab
+        onNewTab,
+        homepage = {
+            "clickable": true,
+            id: "default",
+            name: "Default tab",
+            objectURL: "about:blank",
+            state: "loading"
+        }
     }: {
         target?: string;
         showTabs?: boolean;
         showAddressBar?: boolean;
         onNewTab?: ()=>TabItem;
+        homepage?: TabItem;
     } = $props();
     let items: TabItem[] = $state<TabItem[]>([]);
     let selectedTabItem = $state<string>("default");
     
     let seled = $derived.by<TabItem>(() => {
         if (items.length === 0) {
-            return {
-                id: "default",
-                name: "Default tab",
-                objectURL: "/robots.txt",
-                clickable: true,
-                state: "loading",
-            };
+            return homepage;
         }
         return items.filter((v) => v.id === selectedTabItem)[0];
     });
@@ -77,12 +79,15 @@
         }
     })
     let rctx = useResourceLinkCtx();
-    export function tab_open({ link, target: linkTarget = target }: {link: string, target?: string})  {
+    export function tab_open({ link, target: linkTarget = target }: {link: string, target?: string}, addANewOneEitherway: boolean = false)  {
         if (!linkTarget.startsWith("_") && target !== linkTarget) {
             return;
         }
         if (linkTarget.startsWith("_") && target !== "default") {
             return;
+        }
+        if (target !== "_blank" && !addANewOneEitherway) {
+            
         }
         let pname = new URL(link).pathname;
         let ename = path.basename(pname);
@@ -229,12 +234,13 @@
                 ondrop={e=>{
                     if (e.dataTransfer) {
                         let textData = e.dataTransfer.getData('text');
+                        console.log(textData);
                         try {
                            let parsed =  JSON.parse(textData) as {type: "url", url: string};
                            if (parsed.type === "url") {
                             let u = new URL(parsed.url);
                             let fullURL = u.href;
-                            tab_open({link: fullURL, target: "_blank"});                            
+                            tab_open({link: fullURL});                            
                            }
                         } catch {
 
@@ -246,7 +252,7 @@
 
     </div>
     
-    <diV class="flex flex-col w-full h-full overflow-hidden ">
+    <diV class="flex flex-col w-full h-full overflow-scroll " style="scrollbar-width: none">
         {#if showAddressBar}
         <div class="w-full  h-full">
             <SearchIcon class="absolute"></SearchIcon>

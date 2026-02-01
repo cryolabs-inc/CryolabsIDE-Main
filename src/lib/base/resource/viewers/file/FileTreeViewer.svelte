@@ -7,8 +7,9 @@
     let { rootDir }: { rootDir: string } = $props();
     let fileAPI = $state<FSProviderAPI>();
     let papi = usePageAPI();
+    let rootFileEntry = $derived(new FileEntry(rootDir, "directory", papi, true));
     let treeDataProvider = $derived<FT | undefined>(
-        fileAPI && new FT(fileAPI, papi),
+        fileAPI && new FT(fileAPI, papi, rootFileEntry),
     );
     onMount(()=>{
         (async()=>{
@@ -19,9 +20,10 @@
 
 {#if treeDataProvider}
     <FileTreeItem
-        ftreeItem={new FileEntry(rootDir, "directory", papi, true)}
+        ftreeItem={rootFileEntry}
         tdp={treeDataProvider}
         isRootDir={true}
         level={0}
     ></FileTreeItem>
+    
 {/if}

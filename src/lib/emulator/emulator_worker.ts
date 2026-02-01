@@ -8,13 +8,14 @@ Object.defineProperty(globalThis, 'process', { value: undefined });
 import * as comlink from 'comlink';
 
 import { Emitter } from "$lib/base/events";
-import { fs, fsP } from "$lib/base/fs";
+import { fs, fsP, saveIndex } from "$lib/base/fs";
 import type { ConnectParams, ExtensionAPI, FSDirent, FSProviderAPI, ShellAPI } from "./types";
 import px from "path";
 import { Errno, withErrno } from "kerium";
 import { getHandler } from "$lib/base/fs/p9handler";
 import type { Disposable } from "$lib/base/disposable";
 import type { FSChange } from "$lib/base/fs/changes";
+import { O_CREAT, O_EXCL, O_RDWR, O_TRUNC } from "@zenfs/core/constants.js";
 let basePath = "/";
 let vm_instance = ConstructExtendablePromise<any>();
 
@@ -326,6 +327,7 @@ let progressGroup: MessagePort[] = [];
 let msgLoop: ExtendablePromise<MessageLoop> = ConstructExtendablePromise();
 class FSProviderInternalImpl implements FSProviderAPI {
     fs9p: any;
+    assignedId?: string;
     async renameEntry(oldPath: string, newPath: string): Promise<void> {
         let newParent = px.dirname(newPath);
         let oldParent = px.dirname(oldPath);
@@ -375,8 +377,15 @@ class FSProviderInternalImpl implements FSProviderAPI {
             return r.buffer.subarray(0, r.bytesRead);
         });
     }
+    async assignId(id: string) {
+        this.assignedId = id;
+    }
+    id() {
+        return this.assignedId;
+    }
     async emitGlobal(path: string, method: string, isEntryChange: boolean = false) {
-        globChEmitter.emit({ path, method, isEntryChange });
+        saveIndex();
+        globChEmitter.emit({ path, method, isEntryChange, srcId: this.assignedId});
     }
     async writeFile(path: string, data: ArrayBuffer, length: number, position: number, openMode = fsP.constants.O_TRUNC): Promise<number> {
         let isNewEntry = false;
@@ -385,7 +394,6 @@ class FSProviderInternalImpl implements FSProviderAPI {
         } catch {
             isNewEntry = true;
         }
-        this.emitGlobal(path, "write", isNewEntry);
         return this.withLock(path, async () => {
             length ??= data.byteLength;
             position ??= 0;
@@ -393,6 +401,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
 
             let { bytesWritten } = await fh.write(new Uint8Array(data), { length, position });
             await fh.close();
+        this.emitGlobal(path, "write", isNewEntry);
 
             return bytesWritten;
         });
@@ -414,7 +423,15 @@ class FSProviderInternalImpl implements FSProviderAPI {
         this.emitGlobal(path, "createdir", true);
         return this.withLock(path, async () => await fsP.mkdir(path));
     }
+    async createFile(path: string): Promise<void> {
+        return this.withLock(path, async ()=>{
 
+            let fh = await fsP.open(path, O_CREAT|O_EXCL|O_RDWR);
+            await fh.writeFile(new Uint8Array(0));
+            await fh.close();
+            this.emitGlobal(px.dirname(path), "createFile", true);
+        })   
+    }
     async readDirectory(path: string): Promise<string[]> {
         return this.withLock(path, async () => await fsP.readdir(path));
     }
@@ -464,6 +481,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     async truncate(path: string, nwSize: number): Promise<void> {
         return this.withLock(path, async()=>{
             await fsP.truncate(path, nwSize);
+            await this.emitGlobal(path, "trunc",true);
         })
     }
 }
@@ -648,7 +666,7 @@ async function workerCode(getSrvRoot: () => string) {
         virtio_console: true,
         autostart: true,
         "filesystem": {
-            handle9p: getHandler()
+            handle9p: getHandler(globChEmitter)
         },
         net_device: {
             type: "virtio",
