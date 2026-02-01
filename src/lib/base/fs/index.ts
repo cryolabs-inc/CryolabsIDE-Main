@@ -9,7 +9,7 @@ let rot = await navigator.storage.getDirectory();
 let rootDir = await rot.getDirectoryHandle('files1', {create: true});
 class WebAccess2 extends WebAccessFS {
     idxHandle: FileSystemFileHandle;
-    
+    gettingIdx: boolean = false;
     constructor(rootHandle: FileSystemDirectoryHandle, indexHandle: FileSystemFileHandle, disableHandleCache = false) {
         super(rootHandle, disableHandleCache);
         this.idxHandle = indexHandle;
@@ -25,10 +25,13 @@ class WebAccess2 extends WebAccessFS {
         this.index.fromJSON(jso);
     }
     async saveIndex() {
-        let jsString = JSON.stringify(this.index.toJSON());
+        navigator.locks.request("nlock-fs", {mode: "exclusive"}, (async()=>{
+            let jsString = JSON.stringify(this.index.toJSON());
+            
         let writable = await this.idxHandle.createWritable({keepExistingData: false});
         await writable.write(jsString);
         await writable.close();
+        }));
 
     }
     protected async remove(path: string): Promise<void> {

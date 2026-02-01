@@ -45,6 +45,11 @@ export class PageAPI {
     constructor(rc: ResourceLinkContext) {
         this.rc = rc;
     }
+    resizeAll() {
+        this.#terminals.forEach(v=>{
+            
+        })
+    }
     #onAllLoadedEmitter = new Emitter<void>();
     emitAllLoaded() {
         this.#onAllLoadedEmitter.emit();
