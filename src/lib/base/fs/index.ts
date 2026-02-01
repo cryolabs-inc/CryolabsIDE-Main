@@ -9,11 +9,14 @@ let rot = await navigator.storage.getDirectory();
 let rootDir = await rot.getDirectoryHandle('files1', {create: true});
 class WebAccess2 extends WebAccessFS {
     idxHandle: FileSystemFileHandle;
+    gettingIdx: boolean = false;
     constructor(rootHandle: FileSystemDirectoryHandle, indexHandle: FileSystemFileHandle, disableHandleCache = false) {
         super(rootHandle, disableHandleCache);
         this.idxHandle = indexHandle;
     }
+    
     async initialize() {
+        this.index.maxSize
         let fil = await this.idxHandle.getFile();
         if (fil.size === 0) {
             return; // no data.
@@ -22,16 +25,24 @@ class WebAccess2 extends WebAccessFS {
         this.index.fromJSON(jso);
     }
     async saveIndex() {
-        let jsString = JSON.stringify(this.index.toJSON());
+        navigator.locks.request("nlock-fs", {mode: "exclusive"}, (async()=>{
+            let jsString = JSON.stringify(this.index.toJSON());
+            
         let writable = await this.idxHandle.createWritable({keepExistingData: false});
         await writable.write(jsString);
         await writable.close();
+        }));
 
     }
     protected async remove(path: string): Promise<void> {
         await super.remove(path);
         await this.saveIndex();
         
+    }
+    public async get<const T extends FileSystemHandleKind | null>(kind: T | undefined, path: string): Promise<T extends 'directory' ? FileSystemDirectoryHandle : T extends 'file' ? FileSystemFileHandle : FileSystemHandle> {
+        
+        return super.get(kind, path);
+
     }
     async write(path: string, buffer: Uint8Array, offset: number): Promise<void> {
 
@@ -73,6 +84,7 @@ class WebAccess2 extends WebAccessFS {
 		this.index.set(path, inode);
 
     }
+    
     async _mkdir(path: string): Promise<void> {
         await super._mkdir(path);
         await this.saveIndex();

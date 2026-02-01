@@ -1,12 +1,14 @@
 import { FileHandle } from '@zenfs/core/node/promises.js';
-import { Marshall, Unmarshall } from '../struct';
+import { MarshallArray, UnmarshallArray } from '../struct';
 import { type Dir } from '@zenfs/core';
 
 import * as p from 'path';
-import { O_APPEND, O_RDWR, O_TRUNC, O_WRONLY, S_IFDIR, S_IFMT } from '@zenfs/core/constants.js';
+import { O_APPEND, O_CREAT, O_EXCL, O_RDWR, O_TRUNC, O_WRONLY, S_IFDIR, S_IFMT, S_IFREG } from '@zenfs/core/constants.js';
 import { Exception, withErrno } from 'kerium';
 import { DirType } from '@zenfs/core/vfs/dir.js';
-import { fsP } from '.';
+import { fsP, webfs } from '.';
+import type { FSChange } from './changes';
+import type { Emitter } from '../events';
 enum p9_qid_t {
     P9_QTDIR = 0x80,
     P9_QTAPPEND = 0x40,
@@ -134,6 +136,7 @@ function openFlagsToString(fs: typeof import('.').fsP, flags: number) {
 
   return result.join('|');
 }
+
 class FidInfo implements Qid {
     type: number = 0;
     version: number = 0;
@@ -143,35 +146,54 @@ class FidInfo implements Qid {
     fs: typeof import('@zenfs/core').fs.promises;
     parentHandle: FidInfo | null = null;
     buffer: Uint8Array = new Uint8Array();
+    childrenCache: Map<string, FidInfo> = new Map(); // Cache children by name
+    changeEmitter: Emitter<FSChange>;
+    async emitChange(path: string, method: string, isEntryChange: boolean) {
+        console.log("chemitter", {path, method, isEntryChange});
+        this.changeEmitter.emit({
+            path,
+            method,
+            isEntryChange
+        });
+    }
     async moveTo(oldName: string, newDfid: FidInfo, newName: string) {
-        await this.fs.rename(p.resolve(this.pathId, oldName), p.resolve(newDfid.pathId, newName));
+        webfs.rename(p.resolve(this.pathId, oldName), p.resolve(newDfid.pathId, newName));
+        // Remove from old parent's cache
+        this.childrenCache.delete(oldName);
+        // Invalidate new parent's cache if the new name already existed
+        newDfid.childrenCache.delete(newName);
     }
     async link(name: string, toPath: string) {
 
-        await this.fs.link(p.resolve(this.pathId, name), toPath);
+        await webfs.link(p.resolve(this.pathId, name), toPath);
     }
     async truncate(nwSize: number) {
-        await this.fs.truncate(this.pathId, nwSize);
+        webfs.index.get(this.pathId)?.update({size: nwSize});
     }
     async utime(newMtime: bigint, newAtime: bigint) {
-        await this.fs.utimes(this.pathId, Number(newAtime), Number(newMtime));
+         webfs.index.get(this.pathId)?.update({atimeMs: Number(newAtime), mtimeMs: Number(newMtime)});
     }
     async chown(uid: number, gid: number) {
-        await this.fs.chown(this.pathId, uid, gid);
+        webfs.index.get(this.pathId)?.update({uid, gid});
     }
-    async chmod(nwMode: number) {
-        await this.fs.chmod(this.pathId, nwMode);
+    async chmod(mode: number) {
+        let idx = webfs.index.get(this.pathId);
+        if (!idx) {
+            throw withErrno("ENOENT");
+        }
+
+        webfs.index.get(this.pathId)?.update({mode: (idx.mode & (mode > S_IFMT ? ~S_IFMT : S_IFMT)) | mode});
     }
     constructor(fs: typeof import('@zenfs/core').fs.promises, {
         version, path, pathId, type
-    }: QidWithPath, parentHandle: FidInfo | null = null) {
+    }: QidWithPath, parentHandle: FidInfo | null = null, emitter: Emitter<FSChange>) {
         this.type = type;
         this.version = version;
         this.path = path;
         this.fs = fs;
         this.pathId = pathId;
         this.parentHandle = parentHandle;
-
+        this.changeEmitter =emitter;
     }
     async readlink() {
         return await this.fs.readlink(this.pathId);
@@ -180,14 +202,15 @@ class FidInfo implements Qid {
         let symlinkPath = p.resolve(this.pathId, name);
         await this.fs.symlink(tgt, symlinkPath);
         await this.fs.chown(symlinkPath, 0, gid);
+        this.emitChange(this.pathId, "symlink", true);
         return this.walk(name);
     }
     async mknod() {
         throw withErrno('ENOTSUP', "Mknod() is not supported.")
     }
     async mkdir(name: string, mode: number, gid: number) {
-        await this.fs.mkdir(p.resolve(this.pathId, name), {mode});
-        await this.fs.chown(p.resolve(this.pathId, name), 0, gid);
+        await webfs.mkdir(p.resolve(this.pathId, name), {"mode": mode, uid:0, gid});
+        this.emitChange(this.pathId, "mkdir", true);
     }
     async open(mode: number) {
         let { fs } = this;
@@ -212,41 +235,55 @@ class FidInfo implements Qid {
 
             for (let { name, type } of infos) {
                 let entSize = name.length + 2 + 1 + 8 + 13;
-                u8.set(Marshall({
-                    qid: ["u8array", fmtQid(await this.walk(name))],
-                    offset: ["u64", BigInt(off + entSize)],
-                    type: ['u8', type],
-                    nameLen: ['u16', name.length],
-                    name: ["s", name]
-                }), off);
+                u8.set(MarshallArray([
+                    ["u8array", fmtQid(await this.walk(name))],
+                    ["u64", BigInt(off + entSize)],
+                    ['u8', type],
+                    ['u16', name.length],
+                    ["s", name]
+                ]), off);
                 off += entSize;
             }
             this.buffer = u8;
         } else {
-            this.handle = await fs.open(this.pathId, mode);
+            this.handle = await fs.open(this.pathId, mode&~O_EXCL);
 
         }
 
     }
     async stat() {
 
-        return await this.fs.stat(this.pathId, { bigint: true });
+        let idx =  webfs.index.get(this.pathId);
+        if (!idx){
+            throw new Error("Idx failed.");
+        }
+        return idx;
     }
     async unlink(name: string) {
-        let statsInfo = await this.fs.stat(p.resolve(this.pathId, name));
-        if (statsInfo.isDirectory()) {
-            await this.fs.rmdir(p.resolve(this.pathId, name));
+        let statsInfo = await webfs.stat(p.resolve(this.pathId, name));
+        if ((statsInfo.mode & S_IFMT) === S_IFDIR) {
+            await webfs.rmdir(p.resolve(this.pathId, name));
         } else {
-            await this.fs.unlink(p.resolve(this.pathId, name));
+            await webfs.unlink(p.resolve(this.pathId, name));
         }
+        // Remove from cache after deletion
+        this.childrenCache.delete(name);
+        this.emitChange(this.pathId, "rmdir", true);
     }
     async clunk() {
+
         await this.handle?.close();
     }
-    async walk(name: string) {
+    async walk(name: string): Promise<FidInfo> {
         let { fs } = this;
+
+        // Check children cache first - return existing child if available
+        if (this.childrenCache.has(name)) {
+            return this.childrenCache.get(name)!;
+        }
+
         let npId = p.resolve(this.pathId, name);
-        let stats = await fs.stat(npId); // exception will be thrown if it does nto exist!
+        let stats = await webfs.stat(npId); // exception will be thrown if it does nto exist!
         let qid: QidWithPath = {
             type: 0,
             version: 0,
@@ -259,7 +296,18 @@ class FidInfo implements Qid {
             qid.type = P9_QTDIR;
         }
         qid.version = 0;
-        return new FidInfo(this.fs, qid, this);
+
+        let newFidInfo: FidInfo;
+        if ((stats.mode & S_IFMT) === S_IFREG) {
+            newFidInfo = new RawAccesHandle(this.fs, qid, this, this.changeEmitter);
+        } else {
+            newFidInfo = new FidInfo(this.fs, qid, this, this.changeEmitter);
+        }
+
+        // Store child in cache
+        this.childrenCache.set(name, newFidInfo);
+
+        return newFidInfo;
     }
 
 
@@ -273,7 +321,7 @@ class FidInfo implements Qid {
         let beforeDat: Uint8Array|null = null;
         
         let a =  await this.handle.write(data, { position, length: data.length});
-        
+        this.emitChange(this.pathId, "write" ,false);
         return a;
     }
     async sync() {
@@ -281,7 +329,10 @@ class FidInfo implements Qid {
     }
     async read(position: number, length: number, buffer: Uint8Array): Promise<number> {
         if (this.handle instanceof FileHandle) {
-            return (await this.handle.read(buffer, 0, length, position)).bytesRead;
+            let lbl = "R " + this.pathId + "pos: " + position + "len: " + length
+            
+            let ret =(await this.handle.read(buffer, 0, length, position)).bytesRead;
+            return ret;
         }
         else {
             let readFrom = this.buffer.subarray(position, Math.min(this.buffer.length, position + length));
@@ -292,9 +343,9 @@ class FidInfo implements Qid {
     async create(name: string, mode: number, gid: number) {
         let { fs } = this;
         let filePath = p.resolve(this.pathId, name);
-        await fs.writeFile(filePath, "");
-        await fs.chmod(filePath, mode);
-        await fs.chown(filePath, 0, gid);
+        await webfs.createFile(filePath, {mode, uid:0, gid, size: 0});
+        await webfs.write(filePath, new Uint8Array(0), 0);
+        this.emitChange(this.pathId, "create", true);
         return await this.walk(name);
     }
     getHandle() {
@@ -305,33 +356,264 @@ class FidInfo implements Qid {
         return { path, version, type };
     }
 }
-function fmtQid(qid: Qid) {
-    return Marshall({
-        type: ['u8', qid.type],
-        version: ['u32', qid.version],
-        path: ["u64", qid.path]
-    });
-}
-async function getRootFidInfo(fs: typeof import('@zenfs/core').fs.promises) {
-    let fa = await fs.stat('/');
+class RawAccesHandle extends FidInfo {
+    opfsHandle?: FileSystemSyncAccessHandle;
+    private openMode: number = 0;
 
-    let fidInfo = new FidInfo(fs, { type: P9_QTDIR, pathId: "/", path: BigInt(fa.ino), version: 0 }, null);
+    private readonly BLOCK_SIZE = 65536;
+    private readonly MAX_CACHED_BLOCKS = 4096;
+    private readonly READAHEAD_BLOCKS = 16;
+
+    private blockCache: Map<number, { buffer: Uint8Array, length: number }> = new Map();
+    
+    private static bufferPool: Uint8Array[] = [];
+    private static readonly MAX_POOL_SIZE = 64;
+    
+    private acquireBuffer(): Uint8Array {
+        return RawAccesHandle.bufferPool.pop() ?? new Uint8Array(this.BLOCK_SIZE);
+    }
+    
+    private releaseBuffer(buf: Uint8Array): void {
+        if (buf.length === this.BLOCK_SIZE && RawAccesHandle.bufferPool.length < RawAccesHandle.MAX_POOL_SIZE) {
+            RawAccesHandle.bufferPool.push(buf);
+        }
+    }
+    async updateMeta() {
+        let ino = webfs.index.get(this.pathId);
+        ino?.update({size: this.opfsHandle?.getSize(), mtimeMs: Math.floor(performance.now()), atimeMs: Math.floor(performance.now())});
+    }
+
+    async truncate(newSize: number): Promise<void> {
+        if (!this.opfsHandle) {
+            // If file is not open, use the base class implementation
+            await super.truncate(newSize);
+            return;
+        }
+
+        const oldSize = this.opfsHandle.getSize();
+        this.opfsHandle.truncate(newSize);
+        this.opfsHandle.flush();
+
+        // If file was shrunk, invalidate all affected blocks
+        if (newSize < oldSize) {
+            const firstAffectedBlock = Math.floor(newSize / this.BLOCK_SIZE);
+            // Remove all blocks from firstAffectedBlock onwards
+            for (const [blockNum, entry] of this.blockCache.entries()) {
+                if (blockNum >= firstAffectedBlock) {
+                    this.releaseBuffer(entry.buffer);
+                    this.blockCache.delete(blockNum);
+                }
+            }
+        } else if (newSize > oldSize) {
+            // If file was extended, invalidate the last block of the old size
+            // as it may now contain zeros
+            const lastOldBlock = Math.floor(oldSize / this.BLOCK_SIZE);
+            const entry = this.blockCache.get(lastOldBlock);
+            if (entry) {
+                this.releaseBuffer(entry.buffer);
+                this.blockCache.delete(lastOldBlock);
+            }
+        }
+
+        await this.updateMeta();
+    }
+
+    async open(mode: number): Promise<void> {
+        console.log(webfs);
+        if (this.type !== 0) {
+            throw new Error("cant use raw access with directories");
+        }
+        if (mode & O_CREAT) {
+            try {
+            await webfs.createFile(this.pathId, {mode: 0o777, uid: 0, gid: 0});
+            await webfs.write(this.pathId, new Uint8Array(0), 0);
+            } catch(e) {
+                
+            }
+        }
+        this.openMode = mode;
+        this.opfsHandle = await (await webfs.get("file", this.pathId)).createSyncAccessHandle();
+        let idx = webfs.index.get(this.pathId);
+        console.log(idx?.size);
+        idx && this.opfsHandle.truncate(idx.size);
+        console.log("Truncate?: " + ((mode & O_TRUNC) === O_TRUNC))
+        console.log(openFlagsToString(this.fs, mode));
+
+        if (mode & O_TRUNC) {
+            this.opfsHandle.truncate(0);
+            this.opfsHandle.flush();
+            this.invalidateCache();
+            await this.updateMeta();
+        }
+    }
+
+    async write(data: Uint8Array, position: number): Promise<{ bytesWritten: number; buffer: Uint8Array<ArrayBufferLike>; }> {
+        if (!this.opfsHandle) {
+            throw new Error("Writing without preparing for I/O.");
+        }
+
+        // Validate write permission
+        const accessMode = this.openMode & 0x3;
+        if (accessMode === 0) { // O_RDONLY
+            throw withErrno("EBADF", "File not opened for writing");
+        }
+
+        // Handle O_APPEND: always write to end of file
+        let writePosition = position;
+        if (this.openMode & O_APPEND) {
+            writePosition = this.opfsHandle.getSize();
+        }
+
+        const startBlock = Math.floor(writePosition / this.BLOCK_SIZE);
+        const endBlock = Math.floor((writePosition + data.length - 1) / this.BLOCK_SIZE);
+        for (let b = startBlock; b <= endBlock; b++) {
+            const entry = this.blockCache.get(b);
+            if (entry) {
+                this.releaseBuffer(entry.buffer);
+                this.blockCache.delete(b);
+            }
+        }
+
+        let bytesWritten = this.opfsHandle.write(data, { at: writePosition });
+        await this.updateMeta();
+        this.emitChange(this.pathId, "write", false);
+        return { bytesWritten, buffer: data };
+    }
+
+    async read(position: number, length: number, buffer: Uint8Array): Promise<number> {
+            const t0 = performance.now();
+
+        if (!this.opfsHandle) {
+            throw new Error("Reading without preparing for I/O.");
+        }
+
+        // Validate read permission
+        const accessMode = this.openMode & 0x3;
+        if (accessMode === O_WRONLY) {
+            throw withErrno("EBADF", "File not opened for reading");
+        }
+
+        const startBlock = Math.floor(position / this.BLOCK_SIZE);
+        const endBlock = Math.floor((position + length - 1) / this.BLOCK_SIZE);
+
+        let bufferOffset = 0;
+
+        for (let blockNum = startBlock; blockNum <= endBlock; blockNum++) {
+            
+            const t1 = performance.now();
+        const block = this.getBlock(blockNum);
+        const t2 = performance.now();
+        
+        
+            const blockStart = blockNum * this.BLOCK_SIZE;
+            const readStart = Math.max(position, blockStart);
+            const readEnd = Math.min(position + length, blockStart + block.length);
+            
+            const offsetInBlock = readStart - blockStart;
+            const copyLength = readEnd - readStart;
+            
+            if (copyLength <= 0) break;
+
+            buffer.set(block.buffer.subarray(offsetInBlock, offsetInBlock + copyLength), bufferOffset);
+            bufferOffset += copyLength;
+        }
+
+    this.readAhead(endBlock + 1);
+
+
+        return bufferOffset;
+    }
+
+    private getBlock(blockNum: number): { buffer: Uint8Array, length: number } {
+        const cached = this.blockCache.get(blockNum);
+        if (cached) {
+            this.blockCache.delete(blockNum);
+            this.blockCache.set(blockNum, cached);
+            return cached;
+        }
+        return this.fetchBlock(blockNum);
+    }
+
+    private fetchBlock(blockNum: number): { buffer: Uint8Array, length: number } {
+        const blockStart = blockNum * this.BLOCK_SIZE;
+        const buffer = this.acquireBuffer();
+        const bytesRead = this.opfsHandle!.read(buffer, { at: blockStart });
+
+        const entry = { buffer, length: bytesRead };
+        if (this.blockCache.size >= this.MAX_CACHED_BLOCKS) {
+            const firstKey = this.blockCache.keys().next().value!;
+            const evicted = this.blockCache.get(firstKey)!;
+            this.releaseBuffer(evicted.buffer);
+            this.blockCache.delete(firstKey);
+        }
+
+        this.blockCache.set(blockNum, entry);
+        return entry;
+    }
+
+    private readAhead(startBlockNum: number): void {
+        if (this.blockCache.size >= this.MAX_CACHED_BLOCKS - this.READAHEAD_BLOCKS) {
+            return;
+        }
+
+        const fileSize = this.opfsHandle!.getSize();
+
+        for (let i = 0; i < this.READAHEAD_BLOCKS; i++) {
+            const blockNum = startBlockNum + i;
+            
+            if (this.blockCache.has(blockNum)) continue;
+            
+            const blockStart = blockNum * this.BLOCK_SIZE;
+            if (blockStart >= fileSize) break;
+
+            this.fetchBlock(blockNum);
+        }
+    }
+
+    private invalidateCache(): void {
+        for (const entry of this.blockCache.values()) {
+            this.releaseBuffer(entry.buffer);
+        }
+        this.blockCache.clear();
+    }
+
+    async sync(): Promise<void> {
+        if (this.opfsHandle) {
+            this.opfsHandle.flush();
+        }
+    }
+
+    async clunk(): Promise<void> {
+        await super.clunk();
+        this.opfsHandle?.flush();
+        this.opfsHandle?.close();
+        this.opfsHandle = undefined;
+        this.invalidateCache();
+    }
+}
+function fmtQid(qid: Qid) {
+    return MarshallArray([
+        ['u8', qid.type],
+        ['u32', qid.version],
+        ["u64", qid.path]
+    ]);
+}
+async function getRootFidInfo(fs: typeof import('@zenfs/core').fs.promises, emitter: Emitter<FSChange>) {
+    let fa = await fs.stat('/');
+    let fidInfo = new FidInfo(fs, { type: P9_QTDIR, pathId: "/", path: BigInt(fa.ino), version: 0 }, null, emitter);
     return fidInfo;
 
 }
 
-function getHandler() {
+function getHandler(chEmitter: Emitter<FSChange>) {
     let fids: Record<number, FidInfo> = {};
     let tagsFlushed: Set<number> = new Set();
-    
+    let msize = 0;
+    let rootFidInfo: FidInfo | null = null;
 
     async function p9handler(fs: typeof import('.').fsP, request: Uint8Array, respond: (response: Uint8Array) => void) {
-        let [off, { tag, length, method }] = Unmarshall(request, {
-            "length": ["u32"],
-            "method": ["u8"],
-            tag: ["u16"]
-        }, {littleEndian: true});
-        let [, { msgbytes }] = Unmarshall(request, { msgbytes: ["u8array", length - 4 - 1 - 2] }, { byteOffset: off })
+        const [off, [length, method, tag]] = UnmarshallArray(request, [["u32"], ["u8"], ["u16"]]);
+        const [, [msgbytes]] = UnmarshallArray(request, [["u8array", length - 4 - 1 - 2]], { byteOffset: off });
         let methodSpecific: Uint8Array | null = null;
         let methodNum = method as p9_msg_t;
 
@@ -345,65 +627,54 @@ function getHandler() {
                 }
                 case p9_msg_t.P9_TSTATFS: {
                     let stats = await fs.statfs('/');
-                    methodSpecific = Marshall({
-                        type: ["u32", stats.type],
-                        bsize: ['u64', BigInt(Math.floor(stats.bsize))],
-                        blocks: ['u64', BigInt(Math.floor(stats.blocks))],
-                        bfree: ['u64', BigInt(Math.floor(stats.bfree))],
-                        bavail: ['u64', BigInt(Math.floor(stats.bavail))],
-                        files: ["u64", BigInt(Math.floor(stats.files))],
-                        ffree: ["u64", BigInt(Math.floor(stats.ffree))],
-                        fsid: ["u64", 0n],
-                        namelen: ['u32', 255]
-                    });
+                    // Inline: u32 + 7*u64 + u32 = 4 + 56 + 4 = 64 bytes
+                    methodSpecific = new Uint8Array(64);
+                    const statfsView = new DataView(methodSpecific.buffer);
+                    statfsView.setUint32(0, stats.type, true);
+                    statfsView.setBigUint64(4, 8192n, true);
+                    statfsView.setBigUint64(12, BigInt(Math.floor(stats.blocks)), true);
+                    statfsView.setBigUint64(20, BigInt(Math.floor(stats.bfree)), true);
+                    statfsView.setBigUint64(28, BigInt(Math.floor(stats.bavail)), true);
+                    statfsView.setBigUint64(36, BigInt(Math.floor(stats.files)), true);
+                    statfsView.setBigUint64(44, BigInt(Math.floor(stats.ffree)), true);
+                    statfsView.setBigUint64(52, 0n, true);
+                    statfsView.setUint32(60, 255, true);
                     break;
                 }
                 case p9_msg_t.P9_TLOPEN: {
-                    let [, { fid, flags }] = Unmarshall(msgbytes, {
-                        fid: ['u32'],
-                        flags: ['u32']
-                    });
+                    console.time("OPEN");
+                    const [, [fid, flags]] = UnmarshallArray(msgbytes, [["u32"], ["u32"]]);
                     let fidInfo = fids[fid];
                     if (!fidInfo) {
                         throw withErrno("EINVAL");
                     }
                     await fidInfo.open(flags);
                     let qid = fidInfo.asQid();
-
-                    methodSpecific = Marshall({
-                        qid: ["u8array", fmtQid(qid)],
-                        iounit: ["u32", 1024 * 1024]
-                    });
+                    console.log("Using msize: " + msize);
+                    methodSpecific = MarshallArray([
+                        ["u8array", fmtQid(qid)],
+                        ["u32", msize - 24]
+                    ]);
+                    console.timeEnd("OPEN")
                     break;
 
                 }
                 case p9_msg_t.P9_TLCREATE: {
-                    let [, { fid, name, flags, mode, gid }] = Unmarshall(msgbytes, {
-                        fid: ["u32"],
-                        name: ["sl"],
-                        flags: ["u32"],
-                        mode: ["u32"],
-                        gid: ["u32"]
-                    });
+                    const [, [fid, name, flags, mode, gid]] = UnmarshallArray(msgbytes, [["u32"], ["sl"], ["u32"], ["u32"], ["u32"]]);
                     let pFid = fids[fid];
                     let newQid = await pFid.create(name, mode, gid);
                     // Replace parent fid with the newly created file's fid
                     fids[fid] = newQid;
                     // Open the file with specified flags
                     await newQid.open(flags);
-                    methodSpecific = Marshall({
-                        qid: ["u8array", fmtQid(newQid)],
-                        iounit: ["u32", 1024 * 1024]
-                    });
+                    methodSpecific = MarshallArray([
+                        ["u8array", fmtQid(newQid)],
+                        ["u32", 1024 * 1024]
+                    ]);
                     break;
                 }
                 case p9_msg_t.P9_TSYMLINK: {
-                    let [, { fid, name, symtgt, gid }] = Unmarshall(msgbytes, {
-                        fid: ["u32"],
-                        name: ["sl"],
-                        symtgt: ["sl"],
-                        gid: ["u32"]
-                    });
+                    const [, [fid, name, symtgt, gid]] = UnmarshallArray(msgbytes, [["u32"], ["sl"], ["sl"], ["u32"]]);
                     let f = fids[fid];
                     methodSpecific = fmtQid(await f.symlink(name, symtgt, gid));
 
@@ -416,13 +687,13 @@ function getHandler() {
                     throw withErrno("ENOTSUP", "old rename not supported");
                 }
                 case p9_msg_t.P9_TREADLINK: {
-                    let [, { f }] = Unmarshall(msgbytes, { f: ["u32"] });
+                    const [, [f]] = UnmarshallArray(msgbytes, [["u32"]]);
                     let fidInf = fids[f];
-                    methodSpecific = Marshall({ s: ["sl", await fidInf.readlink()] });
+                    methodSpecific = MarshallArray([["sl", await fidInf.readlink()]]);
                     break;
                 }
                 case p9_msg_t.P9_TGETATTR: {
-                    let [, { fid, requestMask }] = Unmarshall(msgbytes, { fid: ["u32"], requestMask: ["u64"] });
+                    const [, [fid, requestMask]] = UnmarshallArray(msgbytes, [["u32"], ["u64"]]);
                     //     size[4] Rgetattr tag[2] valid[8] qid[13] mode[4] uid[4] gid[4] nlink[8]
                     //  rdev[8] size[8] blksize[8] blocks[8]
                     //  atime_sec[8] atime_nsec[8] mtime_sec[8] mtime_nsec[8]
@@ -430,45 +701,54 @@ function getHandler() {
                     //  gen[8] data_version[8]
                     let mfid = fids[fid];
                     let st = await mfid.stat();
-                    methodSpecific = Marshall({
-                        valid: ["u64", requestMask],
-                        qid: ["u8array", fmtQid(mfid)],
-                        mode: ["u32", Number(st.mode)],
-                        uid: ["u32", Number(st.uid)],
-                        gid: ["u32", Number(st.gid)],
-                        nlink: ["u64", BigInt(st.nlink)],
-                        rdev: ["u64", BigInt(st.rdev)],
-                        size: ["u64", BigInt(st.size)],
-                        blksize: ["u64", BigInt(st.blksize)],
-                        blocks: ["u64", BigInt(st.blocks)],
-                        atime_sec: ['u64', BigInt(st.atimeMs) / 1000n],
-                        atime_nsec: ['u64', BigInt(st.atimeNs)],
-                        mtime_sec: ['u64', BigInt(st.mtimeMs) / 1000n],
-                        mtime_nsec: ["u64", BigInt(st.mtimeNs)],
-                        ctime_sec: ["u64", BigInt(st.ctimeMs) / 1000n],
-                        ctime_nsec: ['u64', BigInt(st.ctimeNs)],
-                        btime_sec: ["u64", BigInt(st.birthtimeMs) / 1000n],
-                        btime_nsec: ["u64", BigInt(st.birthtimeNs)],
-                        gen: ["u64", 0n],
-                        data_version: ["u64", 0n]
-                    });
+
+
+                    let nlink = BigInt(st.nlink);
+                    if ((Number(st.mode) & S_IFMT) === S_IFDIR) {
+                        if (nlink < 2n) nlink = 2n;
+                    } else {
+                        if (nlink < 1n) nlink = 1n;
+                    }
+
+                    // Inline: u64 + qid(u8+u32+u64=13) + 3*u32 + 16*u64 = 8 + 13 + 12 + 128 = 161 bytes
+                    methodSpecific = new Uint8Array(161);
+                    const statView = new DataView(methodSpecific.buffer);
+                    statView.setBigUint64(0, requestMask, true);
+                    // QID: type(u8) + version(u32) + path(u64) = 13 bytes at offset 8
+                    statView.setUint8(8, mfid.type);
+                    statView.setUint32(9, mfid.version, true);
+                    statView.setBigUint64(13, mfid.path, true);
+                    // mode, uid, gid
+                    statView.setUint32(21, Number(st.mode), true);
+                    statView.setUint32(25, Number(st.uid), true);
+                    statView.setUint32(29, Number(st.gid), true);
+                    // nlink, rdev, size, blksize, blocks
+                    statView.setBigUint64(33, nlink, true);
+                    statView.setBigUint64(41, 0n, true);
+                    statView.setBigUint64(49, BigInt(st.size), true);
+                    statView.setBigUint64(57, 8192n, true);
+                    statView.setBigUint64(65, BigInt(st.size) / 8192n, true);
+                    // atime_sec, atime_nsec, mtime_sec, mtime_nsec
+                    statView.setBigUint64(73, BigInt(st.atimeMs) / 1000n, true);
+                    statView.setBigUint64(81, BigInt(st.atimeMs * 1000), true);
+                    statView.setBigUint64(89, BigInt(Math.floor(Number(st.mtimeMs))) / 1000n, true);
+                    statView.setBigUint64(97, BigInt(st.mtimeMs * 1000), true);
+                    // ctime_sec, ctime_nsec, btime_sec, btime_nsec
+                    statView.setBigUint64(105, BigInt(st.ctimeMs * 1000), true);
+                    statView.setBigUint64(113, BigInt(st.ctimeMs), true);
+                    statView.setBigUint64(121, BigInt(st.birthtimeMs) / 1000n, true);
+                    statView.setBigUint64(129, BigInt(st.birthtimeMs) * 1000n, true);
+                    // gen, data_version
+                    statView.setBigUint64(137, 0n, true);
+                    statView.setBigUint64(145, 0n, true);
                     break;
                 }
                 case p9_msg_t.P9_TSETATTR: {
                     //     tag[2] fid[4] valid[4] mode[4] uid[4] gid[4] size[8]
                     //  atime_sec[8] atime_nsec[8] mtime_sec[8] mtime_nsec[8]
-                    let [, { fid, valid, mode, uid, gid, size, atime_sec, mtime_sec }] = Unmarshall(msgbytes, {
-                        fid: ['u32'],
-                        valid: ['u32'],
-                        mode: ["u32"],
-                        uid: ["u32"],
-                        gid: ["u32"],
-                        size: ["u64"],
-                        atime_sec: ["u64"],
-                        atime_nsec: ["u64"],
-                        mtime_sec: ["u64"],
-                        mtime_nsec: ["u64"]
-                    });
+                    const [, [fid, valid, mode, uid, gid, size, atime_sec, , mtime_sec]] = UnmarshallArray(msgbytes, [
+                        ["u32"], ["u32"], ["u32"], ["u32"], ["u32"], ["u64"], ["u64"], ["u64"], ["u64"], ["u64"]
+                    ]);
                     let f = fids[fid];
                     if (valid & P9_SETATTR_MODE) {
                         await f.chmod(mode);
@@ -510,18 +790,18 @@ function getHandler() {
                 }
 
                 case p9_msg_t.P9_TREADDIR: {
-                    let [, {fid, offset, count}] = Unmarshall(msgbytes, {fid: ["u32"], offset: ["u64"], count: ["u32"]});
+                    const [, [fid, offset, count]] = UnmarshallArray(msgbytes, [["u32"], ["u64"], ["u32"]]);
                     let f = fids[fid];
                     let buffer = new Uint8Array(count);
                     let numRead = await f.read(Number(offset), count, buffer);
-                    methodSpecific = Marshall({
-                        count: ["u32", numRead],
-                        data: ['u8array', buffer.subarray(0, numRead)]
-                    });
+                    methodSpecific = MarshallArray([
+                        ["u32", numRead],
+                        ['u8array', buffer.subarray(0, numRead)]
+                    ]);
                     break;
                 }
                 case p9_msg_t.P9_TFSYNC: {
-                    let [, {fid}] = Unmarshall(msgbytes,{fid: ['u32'], datasync:['u32']});
+                    const [, [fid]] = UnmarshallArray(msgbytes, [["u32"], ["u32"]]);
                     let f = fids[fid];
                     await f.sync();
                     methodSpecific = new Uint8Array();
@@ -534,7 +814,7 @@ function getHandler() {
                     throw withErrno("ENOTSUP", "File locking not supported");
                 }
                 case p9_msg_t.P9_TLINK: {
-                    let [, {dfid, fid, name}] = Unmarshall(msgbytes, {dfid: ["u32"], fid: ["u32"], name: ['sl']});
+                    const [, [dfid, fid, name]] = UnmarshallArray(msgbytes, [["u32"], ["u32"], ["sl"]]);
                     let parentFid = fids[dfid];
                     let refedFid = fids[fid];
                     await parentFid.link(name, refedFid.pathId);
@@ -542,7 +822,7 @@ function getHandler() {
                     break;
                 }
                 case p9_msg_t.P9_TMKDIR: {
-                    let [, {dfid, name, mode, gid}] = Unmarshall(msgbytes, {dfid: ["u32"], name: ["sl"], mode: ["u32"], gid: ["u32"]});
+                    const [, [dfid, name, mode, gid]] = UnmarshallArray(msgbytes, [["u32"], ["sl"], ["u32"], ["u32"]]);
                     let parentFid = fids[dfid];
                     await parentFid.mkdir(name, mode, gid);
                     let newDirFid = await parentFid.walk(name);
@@ -551,7 +831,7 @@ function getHandler() {
                 }
                 case p9_msg_t.P9_TRENAMEAT: {
                     //  olddirfid[4] oldname[s] newdirfid[4] newname[s]
-                    let [,{olddirfid, oldname, newdirfid, nwname}] = Unmarshall(msgbytes, {olddirfid: ["u32"], oldname: ["sl"], newdirfid: ["u32"], nwname: ["sl"]});
+                    const [, [olddirfid, oldname, newdirfid, nwname]] = UnmarshallArray(msgbytes, [["u32"], ["sl"], ["u32"], ["sl"]]);
                     let oldParent = fids[olddirfid];
                     let newParent = fids[newdirfid];
                     await oldParent.moveTo(oldname, newParent, nwname);
@@ -560,12 +840,7 @@ function getHandler() {
                 }
                 case p9_msg_t.P9_TUNLINKAT: {
                     // dirfd[4] name[s] flags[4]
-                    let [, {dirfd, name}] = Unmarshall(msgbytes, {
-                        dirfd: ["u32"],
-                        name: ["sl"],
-                        flags: ["u32"]
-                    });
-                    // brother
+                    const [, [dirfd, name]] = UnmarshallArray(msgbytes, [["u32"], ["sl"], ["u32"]]);
 
                     let d = fids[dirfd];
                     await d.unlink(name);
@@ -573,14 +848,13 @@ function getHandler() {
                     break;
                 }
                 case p9_msg_t.P9_TVERSION: {
-                    let [, {msize, version}] = Unmarshall(msgbytes, {
-                        msize: ["u32"],
-                        version: ["sl"]
-                    });
-                    methodSpecific = Marshall({
-                        msize: ["u32", msize],
-                        version: ["sl", "9P2000.L"]
-                    });
+                    const [, [msizeu]] = UnmarshallArray(msgbytes, [["u32"], ["sl"]]);
+                    msize = msizeu;
+                    console.log("MSIZE: " + msize);
+                    methodSpecific = MarshallArray([
+                        ["u32", msize],
+                        ["sl", "9P2000.L"]
+                    ]);
                     break;
                 }
 
@@ -589,15 +863,12 @@ function getHandler() {
                 }
                 case p9_msg_t.P9_TATTACH: {
                     // fid[4] afid[4] uname[s] aname[s] n_uname[4]
-                    let [, {fid, uname, n_uname}] = Unmarshall(msgbytes, {
-                        fid: ["u32"],
-                        afid: ["u32"],
-                       uname: ["sl"],
-                       aname: ["sl"] ,
-                       n_uname: ["u32"]
-                    });
+                    const [, [fid, , uname, , n_uname]] = UnmarshallArray(msgbytes, [["u32"], ["u32"], ["sl"], ["sl"], ["u32"]]);
                     console.info(`[INFO] 9p session established for ${uname}, uid: ${n_uname}`);
-                    fids[fid] = await getRootFidInfo(fs);
+                    if (!rootFidInfo) {
+                        rootFidInfo = await getRootFidInfo(fs, chEmitter);
+                    }
+                    fids[fid] = rootFidInfo;
                     methodSpecific = fmtQid(fids[fid].asQid());
                     break;
                 }
@@ -614,11 +885,7 @@ function getHandler() {
                 }
                 case p9_msg_t.P9_TWALK: {
                     // fid[4] newfid[4] nwname[2] nwname*(wname[s])
-                    let [off, {fid, newfid, numNwname}] = Unmarshall(msgbytes, {
-                        fid: ["u32"],
-                        newfid: ["u32"],
-                        numNwname: ["u16"]
-                    });
+                    let [off, [fid, newfid, numNwname]] = UnmarshallArray(msgbytes, [["u32"], ["u32"], ["u16"]]);
 
                     let currentPath = fids[fid];
                     if (!currentPath) {
@@ -627,34 +894,27 @@ function getHandler() {
 
                     let walkedPaths: Qid[] = [];
 
-                    // Special case: numNwname == 0 means clone the fid
                     if (numNwname === 0) {
                         fids[newfid] = currentPath;
-                        methodSpecific = Marshall({
-                            nwqid: ["u16", 0],
-                            qids: ["u8array", new Uint8Array(0)]
-                        });
+                        methodSpecific = MarshallArray([
+                            ["u16", 0],
+                            ["u8array", new Uint8Array(0)]
+                        ]);
                         break;
                     }
 
-                    // Try to walk through all path components
                     for (let i = 0; i < numNwname; i++) {
-                        let [newOff, {n}] = Unmarshall(msgbytes, {
-                            n: ["sl"]
-                        }, {byteOffset: off});
+                        let [newOff, [n]] = UnmarshallArray(msgbytes, [["sl"]], { byteOffset: off });
                         off = newOff;
 
                         try {
                             currentPath = await currentPath.walk(n);
                             walkedPaths.push(currentPath.asQid());
                         } catch (e) {
-                            // Partial walk: return qids accumulated so far
-                            // Don't set newfid, just return what we got
                             break;
                         }
                     }
 
-                    // Only set newfid if all walks succeeded
                     if (walkedPaths.length === numNwname) {
                         fids[newfid] = currentPath;
                     }
@@ -664,10 +924,10 @@ function getHandler() {
                         qidsData.set(fmtQid(walkedPaths[i]), i * 13);
                     }
 
-                    methodSpecific = Marshall({
-                        nwqid: ["u16", walkedPaths.length],
-                        qids: ["u8array", qidsData]
-                    });
+                    methodSpecific = MarshallArray([
+                        ["u16", walkedPaths.length],
+                        ["u8array", qidsData]
+                    ]);
                     break;
                 }
                 case p9_msg_t.P9_RWALK: {
@@ -686,46 +946,62 @@ function getHandler() {
                     break;
                 }
                 case p9_msg_t.P9_TREAD: {
-                    let [, {fid, offset, count}] = Unmarshall(msgbytes, {
-                        fid: ["u32"],
-                        offset: ["u64"],
-                        count: ["u32"]
-                    });
+                    // console.time("READ");
+                    const [, [fid, offset, count]] = UnmarshallArray(msgbytes, [["u32"], ["u64"], ["u32"]]);
+                    console.log("cnt: " + count);
+
                     let f = fids[fid];
-                    let buffer = new Uint8Array(count);
-                    let numRead = await f.read(Number(offset), count, buffer);
-                    methodSpecific = Marshall({
-                        count: ["u32", numRead],
-                        data: ["u8array", buffer.subarray(0, numRead)]
-                    });
-                    break;
+
+                    // Pre-allocate response buffer: size(4) + method(1) + tag(2) + numRead(4) + data(count)
+                    const maxResponseSize = 4 + 1 + 2 + 4 + count;
+                    const response = new Uint8Array(maxResponseSize);
+                    const view = new DataView(response.buffer);
+
+                    // Read directly into response buffer at offset 11
+                    let numRead = await f.read(Number(offset), count, response.subarray(11));
+
+                    // Write header
+                    const payloadSize = 4 + numRead;  // numRead field + data
+                    const totalSize = 4 + 1 + 2 + payloadSize;
+                    view.setUint32(0, totalSize, true);
+                    view.setUint8(4, retMethod);
+                    view.setUint16(5, tag, true);
+                    view.setUint32(7, numRead, true);
+
+                    respond(response.subarray(0, totalSize));
+                    // console.timeEnd("READ");
+
+                    return;
                 }
                 case p9_msg_t.P9_RREAD: {
                     break;
                 }
                 case p9_msg_t.P9_TWRITE: {
-                    let [, {fid, offset, count}] = Unmarshall(msgbytes, {
-                        fid: ["u32"],
-                        offset: ["u64"],
-                        count: ["u32"]
-                    });
-                    let [, {data}] = Unmarshall(msgbytes, {
-                        data: ["u8array", count]
-                    }, {byteOffset: 16}); // 4 + 8 + 4
+                    console.time("WRITE");
+                    const [, [fid, offset, count]] = UnmarshallArray(msgbytes, [["u32"], ["u64"], ["u32"]]);
+
+                    // Read data directly from msgbytes without extra allocation
+                    const dataView = msgbytes.subarray(16, 16 + count);
                     let f = fids[fid];
-                    let r = await f.write(data, Number(offset));
-                    methodSpecific = Marshall({
-                        count: ["u32", r.bytesWritten]
-                    });
-                    break;
+                    let r = await f.write(dataView, Number(offset));
+
+                    // Write response directly: size(4) + method(1) + tag(2) + bytesWritten(4)
+                    const response = new Uint8Array(11);
+                    const view = new DataView(response.buffer);
+                    view.setUint32(0, 11, true);  // total size
+                    view.setUint8(4, retMethod);
+                    view.setUint16(5, tag, true);
+                    view.setUint32(7, r.bytesWritten, true);
+
+                    console.timeEnd("WRITE");
+                    respond(response);
+                    return;
                 }
                 case p9_msg_t.P9_RWRITE: {
                     break;
                 }
                 case p9_msg_t.P9_TCLUNK: {
-                    let [, {fid}] = Unmarshall(msgbytes, {
-                        fid: ["u32"]
-                    });
+                    const [, [fid]] = UnmarshallArray(msgbytes, [["u32"]]);
                     let f = fids[fid];
                     if (f) {
                         await f.clunk();
@@ -738,9 +1014,7 @@ function getHandler() {
                     break;
                 }
                 case p9_msg_t.P9_TREMOVE: {
-                    let [, {fid}] = Unmarshall(msgbytes, {
-                        fid: ["u32"]
-                    });
+                    const [, [fid]] = UnmarshallArray(msgbytes, [["u32"]]);
                     let f = fids[fid];
                     if (f) {
                         if (f.parentHandle) {
@@ -779,30 +1053,30 @@ function getHandler() {
                 tagsFlushed.delete(tag);
                 return;
             }
-            let retBuffer = Marshall({
-                method: ["u8", retMethod],
-                tag: ["u16", tag],
-                dat: ["u8array", methodSpecific]
-            });
-            let buf = Marshall({
-                length: ["u32", retBuffer.length + 4],
-                dat: ['u8array', retBuffer]
-            });
-            respond(buf);
+            
+            let completeBuffer = new ArrayBuffer(1 + 2 + 4 + methodSpecific.length);
+            let u8 = new Uint8Array(completeBuffer);
+            u8.set(methodSpecific, 1 + 2 + 4);
+            let dv = new DataView(completeBuffer);
+            dv.setUint32(0, completeBuffer.byteLength, true);
+            dv.setUint8(4, retMethod);
+            dv.setUint16(5, tag, true);
+            respond(u8);
             return;
         } catch (e) {
+            console.error(e);
             if (e instanceof Exception) {
                 let errNum = e.errno;
-                let dat = Marshall({
-                    method: ["u8", p9_msg_t.P9_RLERROR],
-                    tag: ["u16", tag],
-                    ecode: ["u32", errNum]
+                let dat = MarshallArray([
+                    ["u8", p9_msg_t.P9_RLERROR],
+                    ["u16", tag],
+                    ["u32", errNum]
 
-                });
-                let ret = Marshall({
-                    length: ["u32", dat.byteLength + 4],
-                    data: ["u8array", dat]
-                });
+                ]);
+                let ret = MarshallArray([
+                    ["u32", dat.byteLength + 4],
+                    ["u8array", dat]
+                ]);
                 respond(ret);
                 return;
             } else {

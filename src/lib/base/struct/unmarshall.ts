@@ -1,5 +1,142 @@
 import type { MarshallParams, StructDataMapOutput, StructDataMapInput, MarshallFunction, UnmarshallFunction, StructDataMapOutputT } from "./types";
 
+// Type for array-based unmarshall entries (mirrors MarshallEntry but for reading)
+type UnmarshallEntry =
+    | ["u8"]
+    | ["u16"]
+    | ["u32"]
+    | ["u64"]
+    | ["i8"]
+    | ["i16"]
+    | ["i32"]
+    | ["i64"]
+    | ["s", number]      // fixed-length string
+    | ["sl"]             // length-prefixed string
+    | ["u8array", number]
+    | ["u16array", number]
+    | ["u32array", number]
+    | ["u64array", number];
+
+type UnmarshallResult<T extends UnmarshallEntry> =
+    T[0] extends "u8" | "u16" | "u32" | "i8" | "i16" | "i32" ? number :
+    T[0] extends "u64" | "i64" ? bigint :
+    T[0] extends "s" | "sl" ? string :
+    T[0] extends "u8array" ? Uint8Array :
+    T[0] extends "u16array" ? Uint16Array :
+    T[0] extends "u32array" ? Uint32Array :
+    T[0] extends "u64array" ? BigUint64Array :
+    never;
+
+/**
+ * Fast array-based Unmarshall - mirrors MarshallArray but for reading
+ * Single-pass direct reading with minimal overhead
+ *
+ * @example
+ * const [offset, [type, version, path]] = UnmarshallArray(buffer, [
+ *   ["u8"],
+ *   ["u32"],
+ *   ["u64"]
+ * ]);
+ */
+export function UnmarshallArray<T extends UnmarshallEntry[]>(
+    arrayBuffer: Uint8Array,
+    entries: T,
+    options: { littleEndian?: boolean; byteOffset?: number } = {}
+): [number, { [K in keyof T]: UnmarshallResult<T[K]> }] {
+    const u8 = arrayBuffer;
+    const view = new DataView(arrayBuffer.buffer, arrayBuffer.byteOffset, arrayBuffer.byteLength);
+    const { littleEndian = true } = options;
+    let offset = options.byteOffset ?? 0;
+
+    const results: any[] = [];
+    const len = entries.length;
+
+    for (let i = 0; i < len; i++) {
+        const entry = entries[i];
+
+        switch (entry[0]) {
+            case "u8":
+                results.push(view.getUint8(offset));
+                offset += 1;
+                break;
+            case "u16":
+                results.push(view.getUint16(offset, littleEndian));
+                offset += 2;
+                break;
+            case "u32":
+                results.push(view.getUint32(offset, littleEndian));
+                offset += 4;
+                break;
+            case "u64":
+                results.push(view.getBigUint64(offset, littleEndian));
+                offset += 8;
+                break;
+            case "i8":
+                results.push(view.getInt8(offset));
+                offset += 1;
+                break;
+            case "i16":
+                results.push(view.getInt16(offset, littleEndian));
+                offset += 2;
+                break;
+            case "i32":
+                results.push(view.getInt32(offset, littleEndian));
+                offset += 4;
+                break;
+            case "i64":
+                results.push(view.getBigInt64(offset, littleEndian));
+                offset += 8;
+                break;
+            case "sl": {
+                const strLen = view.getUint16(offset, littleEndian);
+                const str = new TextDecoder().decode(u8.subarray(offset + 2, offset + 2 + strLen));
+                results.push(str);
+                offset += 2 + strLen;
+                break;
+            }
+            case "s": {
+                const strLen = entry[1];
+                const str = new TextDecoder().decode(u8.subarray(offset, offset + strLen));
+                results.push(str);
+                offset += strLen;
+                break;
+            }
+            case "u8array": {
+                const arrLen = entry[1];
+                results.push(u8.slice(offset, offset + arrLen));
+                offset += arrLen;
+                break;
+            }
+            case "u16array": {
+                const count = entry[1];
+                const byteLen = count * 2;
+                const sliced = u8.slice(offset, offset + byteLen);
+                results.push(new Uint16Array(sliced.buffer, sliced.byteOffset, count));
+                offset += byteLen;
+                break;
+            }
+            case "u32array": {
+                const count = entry[1];
+                const byteLen = count * 4;
+                const sliced = u8.slice(offset, offset + byteLen);
+                results.push(new Uint32Array(sliced.buffer, sliced.byteOffset, count));
+                offset += byteLen;
+                break;
+            }
+            case "u64array": {
+                const count = entry[1];
+                const byteLen = count * 8;
+                const sliced = u8.slice(offset, offset + byteLen);
+                results.push(new BigUint64Array(sliced.buffer, sliced.byteOffset, count));
+                offset += byteLen;
+                break;
+            }
+        }
+    }
+
+    return [offset, results as any];
+}
+
 export const Unmarshall: UnmarshallFunction = function (arrayBuffer, keys, arg = {}) {
   // Implementation
   let retObject: Record<string, StructDataMapOutputT> = {};

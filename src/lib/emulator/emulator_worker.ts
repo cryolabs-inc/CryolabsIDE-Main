@@ -8,11 +8,14 @@ Object.defineProperty(globalThis, 'process', { value: undefined });
 import * as comlink from 'comlink';
 
 import { Emitter } from "$lib/base/events";
-import { fs, fsP } from "$lib/base/fs";
+import { fs, fsP, saveIndex } from "$lib/base/fs";
 import type { ConnectParams, ExtensionAPI, FSDirent, FSProviderAPI, ShellAPI } from "./types";
-import path from "path";
+import px from "path";
 import { Errno, withErrno } from "kerium";
 import { getHandler } from "$lib/base/fs/p9handler";
+import type { Disposable } from "$lib/base/disposable";
+import type { FSChange } from "$lib/base/fs/changes";
+import { O_CREAT, O_EXCL, O_RDWR, O_TRUNC } from "@zenfs/core/constants.js";
 let basePath = "/";
 let vm_instance = ConstructExtendablePromise<any>();
 
@@ -128,12 +131,13 @@ function attachMessageHandler(emulator: any) {
 let queryParameters = new URLSearchParams(location.search);
 function getSrvRoot() {
 
-    return  new URL(basePath, location.href).href;
+    return new URL(basePath, location.href).href;
 }
 function receiveMsgpackMessage(emulator: any, cid: number, onMessage: (msg: Uint8Array) => void, onClose: () => void) {
 
 
 }
+let globChEmitter = new Emitter<FSChange>();
 class MessageLoop {
     emulator: any;
     // buffers: [];
@@ -323,7 +327,26 @@ let progressGroup: MessagePort[] = [];
 let msgLoop: ExtendablePromise<MessageLoop> = ConstructExtendablePromise();
 class FSProviderInternalImpl implements FSProviderAPI {
     fs9p: any;
+    assignedId?: string;
+    async renameEntry(oldPath: string, newPath: string): Promise<void> {
+        let newParent = px.dirname(newPath);
+        let oldParent = px.dirname(oldPath);
+        await fsP.rename(oldPath, newPath);
+        await this.emitGlobal(newParent, "rename", true);
+        await this.emitGlobal(oldParent, "rename", true);
+    }
+    async watchForRefresh(refreshCb: (fsChange: FSChange) => void): Promise<Disposable> {
+        let d = globChEmitter.event(refreshCb);
+        return comlink.proxy({
+            dispose() {
+                d.dispose();
+            }
+        });
 
+    }
+    async disposeWatcher() {
+
+    }
     private normalizeLockPath(targetPath: string): string {
         // Normalize path for consistent locking (remove trailing slashes, resolve ..)
         return targetPath.replace(/\/+$/, '') || '/';
@@ -354,14 +377,32 @@ class FSProviderInternalImpl implements FSProviderAPI {
             return r.buffer.subarray(0, r.bytesRead);
         });
     }
-
-    async writeFile(path: string, data: Uint8Array, length: number, position: number): Promise<number> {
+    async assignId(id: string) {
+        this.assignedId = id;
+    }
+    id() {
+        return this.assignedId;
+    }
+    async emitGlobal(path: string, method: string, isEntryChange: boolean = false) {
+        saveIndex();
+        globChEmitter.emit({ path, method, isEntryChange, srcId: this.assignedId});
+    }
+    async writeFile(path: string, data: ArrayBuffer, length: number, position: number, openMode = fsP.constants.O_TRUNC): Promise<number> {
+        let isNewEntry = false;
+        try {
+            await fsP.stat(path);
+        } catch {
+            isNewEntry = true;
+        }
         return this.withLock(path, async () => {
-            length ??= data.length;
+            length ??= data.byteLength;
             position ??= 0;
-            let fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT);
-            let { bytesWritten } = await fh.write(data, { length, position });
+            let fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT | openMode);
+
+            let { bytesWritten } = await fh.write(new Uint8Array(data), { length, position });
             await fh.close();
+        this.emitGlobal(path, "write", isNewEntry);
+
             return bytesWritten;
         });
     }
@@ -370,7 +411,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
         return this.withLock(p, async () => {
             let dat = await fsP.readFile(p) as Uint8Array<ArrayBuffer>;
             let st = await fsP.stat(p);
-            return new File([dat], path.basename(p), { lastModified: st.mtimeMs });
+            return new File([dat], px.basename(p), { lastModified: st.mtimeMs });
         });
     }
 
@@ -379,14 +420,24 @@ class FSProviderInternalImpl implements FSProviderAPI {
     }
 
     async createDirectory(path: string): Promise<void> {
+        this.emitGlobal(path, "createdir", true);
         return this.withLock(path, async () => await fsP.mkdir(path));
     }
+    async createFile(path: string): Promise<void> {
+        return this.withLock(path, async ()=>{
 
+            let fh = await fsP.open(path, O_CREAT|O_EXCL|O_RDWR);
+            await fh.writeFile(new Uint8Array(0));
+            await fh.close();
+            this.emitGlobal(px.dirname(path), "createFile", true);
+        })   
+    }
     async readDirectory(path: string): Promise<string[]> {
         return this.withLock(path, async () => await fsP.readdir(path));
     }
 
     async ls(path: string): Promise<FSDirent[]> {
+
         return this.withLock(path, async () => {
             let od = await fsP.opendir(path);
             let fsd = [] as FSDirent[];
@@ -403,19 +454,40 @@ class FSProviderInternalImpl implements FSProviderAPI {
     }
 
     async removeEntry(path: string): Promise<void> {
+
+        
         return this.withLock(path, async () => {
             await fsP.rm(path);
+        this.emitGlobal(px.dirname(path), "removed", true);
         });
     }
 
-    async removeDirectory(path: string): Promise<void> {
-        return this.withLock(path, async () => { await fsP.rmdir(path) });
+    async removeDirectory(path: string, opts: { recursive: boolean } = { recursive: false }): Promise<void> {
+
+
+        return this.withLock(path, async () => {
+            await fsP.rm(path, {
+                recursive: opts.recursive
+            })
+            this.emitGlobal(px.dirname(path), "removed", true);
+        });
     }
-
+    async mkdir(path: string, opts: { recursive: boolean; } = {recursive: false}): Promise<void> {
+        return this.withLock(path, async()=>{
+            this.emitGlobal(px.dirname(path), "mkdir", true);
+            await fsP.mkdir(path, opts);
+        })
+    }
+    async truncate(path: string, nwSize: number): Promise<void> {
+        return this.withLock(path, async()=>{
+            await fsP.truncate(path, nwSize);
+            await this.emitGlobal(path, "trunc",true);
+        })
+    }
 }
-function downloadV86(getSrvRoot: ()=>string) {
+function downloadV86(getSrvRoot: () => string) {
 
-    return import(/* vite-treat-as-asset */ getSrvRoot() + 'libv86.mjs');
+    return import(/* @vite-ignore */ (getSrvRoot() + 'libv86.mjs'));
 }
 
 class Connection implements Connection {
@@ -454,7 +526,6 @@ class WorkerHandler implements WorkerHandlerAPI {
         progressGroup.push(param.serialConsolePort);
         let vmi = await vm_instance.promise;
 
-        console.log("Hi");
         let e: ExtensionAPI = {
             async onReadyCallback(callback) {
                 Extendable.promise.then(() => {
@@ -492,17 +563,16 @@ class WorkerHandler implements WorkerHandlerAPI {
 }
 let workerHandler = new WorkerHandler();
 self.onmessage = (e) => {
-    console.log("exposed");
     let port = e.ports[0];
     comlink.expose(workerHandler, port);
     port.start();
     if (e.data.start) {
-        let gsrvroot = ()=>(e.data.basePath as string) ?? getSrvRoot()
+        let gsrvroot = () => (e.data.basePath as string) ?? getSrvRoot()
         workerCode(gsrvroot);
     }
 };
 
-async function workerCode(getSrvRoot: ()=>string) {
+async function workerCode(getSrvRoot: () => string) {
     let v86 = await downloadV86(getSrvRoot);
     let disk_storage = await localforage.getItem("disk_downloaded") as ArrayBuffer | undefined;
     if (!disk_storage) {
@@ -513,7 +583,7 @@ async function workerCode(getSrvRoot: ()=>string) {
             if (!r.ok) {
                 throw new Error("Failed to download disk image.");
             }
-            let diskBuffer = new ArrayBuffer(parseInt(r.headers.get("Content-Length") ?? "313774080"));
+            let diskBuffer = new ArrayBuffer(parseInt(r.headers.get("Content-Length") ?? "536870912"));
             let bytes = new Uint8Array(diskBuffer);
             let b = r.body;
             if (!b) {
@@ -571,7 +641,8 @@ async function workerCode(getSrvRoot: ()=>string) {
     let initArgsB64 = initArgs.map(v => btoa(v));
     let final = initArgsB64.join(" ");
     let hda = disk_storage && {
-        buffer: disk_storage
+        buffer: disk_storage,
+        size: disk_storage.byteLength
     };
 
     let v86_startupoptions = {
@@ -595,7 +666,7 @@ async function workerCode(getSrvRoot: ()=>string) {
         virtio_console: true,
         autostart: true,
         "filesystem": {
-            handle9p: getHandler()
+            handle9p: getHandler(globChEmitter)
         },
         net_device: {
             type: "virtio",

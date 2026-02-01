@@ -6,7 +6,6 @@ export class ResourceLinkContext {
     onLinkClicked: TypedEvent<{link: string, target: string}>;
     constructor() {
         let em = new Emitter<{ link: string, target: string }>();
-        console.log(em);
         this.dispatchEventClicked = em.emit.bind(em);
         this.onLinkClicked = em.event.bind(em);
     }
