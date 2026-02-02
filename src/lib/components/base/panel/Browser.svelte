@@ -2,30 +2,19 @@
 
 <script lang="ts">
     import {
-        defaultResourceFetch,
         getResourceManager,
-        ResourceResponse,
     } from "$lib/base/resource";
-    import { ResizablePane } from "$lib/components/ui/resizable";
-    import ResizablePaneGroup from "$lib/components/ui/resizable/resizable-pane-group.svelte";
     import {
-        Loader,
         Loader2Icon,
-        PlusIcon,
         SearchIcon,
-        TableOfContents,
-        XCircleIcon,
         XIcon,
     } from "@lucide/svelte";
     import DraggbleItemList from "../items/DraggbleItemList.svelte";
-    import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
     import { onMount } from "svelte";
     import { useResourceLinkCtx } from "$lib/base/resourceCtx";
     import path from "path";
     import type { TabItem } from "./TabbedPanelCtx";
-    import { Spinner } from "$lib/components/ui/spinner";
-    import { cn, ConstructExtendablePromise } from "$lib/utils";
-    import { dndzone } from "svelte-dnd-action";
+    import { ConstructExtendablePromise } from "$lib/utils";
     import ContextMenu from "$lib/components/ui/context-menu/context-menu.svelte";
     import ContextMenuTrigger from "$lib/components/ui/context-menu/context-menu-trigger.svelte";
     import ContextMenuContent from "$lib/components/ui/context-menu/context-menu-content.svelte";

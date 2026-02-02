@@ -14,35 +14,19 @@
         ResizablePaneGroup,
     } from "$lib/components/ui/resizable";
     import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
-    import type {
-        ExtensionAPI,
-        FSProviderAPI,
-        WorkerHandlerAPI,
-    } from "$lib/emulator/types";
-    import * as comlink from "comlink";
     import {
-        FileHandler,
         ResourceManager,
-        ResourceResponse,
         setResourceManager,
-        SimpleResourceHandler,
     } from "$lib/base/resource";
-    import { PageAPI, setPageAPI, usePageAPI } from "../panel/apis/PageAPI";
+    import { PageAPI, setPageAPI } from "../panel/apis/PageAPI";
     import {
         ResourceLinkContext,
         setResourceLinkCtx,
     } from "$lib/base/resourceCtx";
-    import path from "path";
-    import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
     import { Emitter } from "$lib/base/events";
     import FilePanel from "../panel/contents/FilePanel.svelte";
-    import {
-        ConstructExtendablePromise,
-        type ExtendablePromise,
-    } from "$lib/utils";
     import Emulator from "../emulator/Emulator.svelte";
     import { setWM, WM } from "../windows/WM";
-    import type { TabItem } from "../panel/TabbedPanelCtx";
     import StatusBar from "../statusbar/StatusBar.svelte";
     let { basePath = "/" }: { basePath?: string } = $props();
     class FullEditorPrefs {
