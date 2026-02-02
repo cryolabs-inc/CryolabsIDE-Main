@@ -2,25 +2,17 @@
     lang="ts"
     generics="T extends (Item & {id: string, clickable: boolean})"
 >
-    import { Emitter } from "$lib/base/events";
-
+    
     import {
-        setContext,
-        type Component,
-        type ComponentProps,
         type Snippet,
     } from "svelte";
-    import type { ItemGroupContext, SelectionKey } from ".";
     import {
         dndzone,
         TRIGGERS,
-        type DndZoneAttributes,
         type Item,
         type Options,
     } from "svelte-dnd-action";
-    import Button from "$lib/components/ui/button/button.svelte";
     import { twMerge, type ClassNameValue } from "tailwind-merge";
-    import path from "path";
     import type { HTMLAttributes } from "svelte/elements";
     interface DProps extends HTMLAttributes<HTMLDivElement> {
         orientation: "horizontal" | "vertical";

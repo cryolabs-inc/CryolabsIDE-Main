@@ -5,8 +5,7 @@
     import type { Options } from "svelte-dnd-action";
     import DraggbleItemList from "../items/DraggbleItemList.svelte";
     import type { SidePanelItem } from "./SidePanelItem";
-    import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
-
+    
     let { items = $bindable(), selected=$bindable(""), dndZoneProps= {type: `fj-side-panel-${crypto.randomUUID()}`}}: { items: SidePanelItem<unknown>[], selected?: string, dndZoneProps?: Partial<Options<SidePanelItem<unknown>>> } = $props();
     let selectedItem = $derived(items.filter(v=>v.id===selected)[0]);
     

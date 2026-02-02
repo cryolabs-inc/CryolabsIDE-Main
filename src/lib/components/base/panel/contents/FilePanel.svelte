@@ -3,7 +3,6 @@
     import Browser from "../Browser.svelte";
     import { usePageAPI } from "../apis/PageAPI";
 
-        let papi = usePageAPI();
 
     let b = $state<Browser>();
     onMount(()=>{
