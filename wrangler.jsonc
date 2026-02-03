@@ -1,0 +1,6 @@
+{
+    "name": "cryo-worker",
+    "compatibility_date": "2026-02-02",
+    "main": "src/wrangler/index.ts",
+    "compatibility_flags": ["nodejs_compat"],
+}
