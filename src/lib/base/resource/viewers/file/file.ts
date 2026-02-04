@@ -158,9 +158,27 @@ export class FT implements TreeDataProvider<FileEntry> {
         this.#selectedEvt.emit({ selectedPaths: this.selectedEntries });
     }
 
-    registerEntry(entry: FileEntry) {
-        if (!this.allEntries.find(e => e.filePath === entry.filePath)) {
+    registerEntry(entry: FileEntry, index?: number) {
+        const existingIdx = this.allEntries.findIndex(e => e.filePath === entry.filePath);
+
+        if (existingIdx !== -1) {
+            // Remove from current position if already registered
+            this.allEntries.splice(existingIdx, 1);
+        }
+
+        if (index !== undefined && index >= 0) {
+            // Insert at specified position
+            this.allEntries.splice(index, 0, entry);
+        } else {
+            // Append to end if no index specified
             this.allEntries.push(entry);
+        }
+    }
+
+    unregisterEntry(entry: FileEntry) {
+        const idx = this.allEntries.findIndex(e => e.filePath === entry.filePath);
+        if (idx !== -1) {
+            this.allEntries.splice(idx, 1);
         }
     }
 

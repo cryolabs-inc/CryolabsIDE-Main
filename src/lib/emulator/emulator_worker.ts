@@ -362,6 +362,9 @@ class FSProviderInternalImpl implements FSProviderAPI {
     constructor(fsOpfs: any) {
         this.fs9p = fsOpfs;
     }
+    readdir(path: string): Promise<string[]> {
+        return this.readDirectory(path);
+    }
 
     async readFile(path: string, length?: number, position?: number): Promise<Uint8Array> {
         return this.withLock(path, async () => {

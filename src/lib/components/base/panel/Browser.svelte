@@ -21,7 +21,7 @@
     import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
     import { Emitter } from "$lib/base/events";
     let {
-        target = "default",
+        target = crypto.randomUUID(),
         showTabs = true,
         showAddressBar = false,
         onNewTab,

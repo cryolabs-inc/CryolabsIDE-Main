@@ -64,6 +64,7 @@ export interface FSProviderAPI {
     mkdir(path: string, opts?: {recursive: boolean}): Promise<void>;
     truncate(path: string, nwSize: number): Promise<void>;
     createFile(path: string): Promise<void>;
+    readdir(path: string): Promise<string[]>;
 }
 
 export interface Connection {

@@ -26,12 +26,14 @@
         tdp,
         level = 0,
         showHiddenEntries = $bindable(false),
+        visualIndex,
     }: {
         ftreeItem: FileEntry;
         isRootDir?: boolean;
         tdp: FT;
         level?: number;
         showHiddenEntries?: boolean;
+        visualIndex?: number;
     } = $props();
     let childrenTreeItems = $state<FileEntry[] | null>(null);
     let toShowInOrder = $derived<FileEntry[]|null>(childrenTreeItems && childrenTreeItems.slice().sort((a,b)=>a.prio-b.prio));
@@ -124,7 +126,7 @@
     }
     onMount(() => {
         // Register this entry for range selection
-        tdp.registerEntry(ftreeItem);
+        tdp.registerEntry(ftreeItem, visualIndex);
 
         tdp.onStateShouldChange(({path, state})=>{
             if (path === ftreeItem.filePath) {
@@ -152,11 +154,19 @@
             );
         })();
         return () => {
+            tdp.unregisterEntry(ftreeItem);
             if (disp) {
                 console.log("disposing.");
                 disp.dispose();
             }
         };
+    });
+
+    // Re-register when visualIndex changes to maintain correct order
+    $effect(() => {
+        if (visualIndex !== undefined) {
+            tdp.registerEntry(ftreeItem, visualIndex);
+        }
     });
     let wholeDiv = $state<HTMLDivElement>();
 </script>
@@ -164,7 +174,7 @@
 {#snippet childrenLst()}
     {#if toShowInOrder !== null}
         <ul>
-            {#each toShowInOrder as ti (ti.filePath)}
+            {#each toShowInOrder as ti, idx (ti.filePath)}
                 {#if !ti.isHidden || showHiddenEntries}
                 <li
                     class={cn(
@@ -178,6 +188,7 @@
                         {tdp}
                         level={level + 1}
                         bind:showHiddenEntries
+                        visualIndex={idx}
                     ></FileTreeItem>
                 </li>
                 {/if}
@@ -258,7 +269,7 @@
                             }}
                             draggable={!isRenaming}
                             href={ftreeItem.link.href}
-                            target={"_blank"}
+                            target={"upper"}
                         >
                             {ftreeItem.label}
                         </Link>
