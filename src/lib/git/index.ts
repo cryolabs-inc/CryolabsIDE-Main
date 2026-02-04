@@ -1,8 +1,9 @@
 import type { FSProviderAPI } from "$lib/emulator/types";
 import type { AutocompleteProvider, AutocompleteSuggestion } from "$lib/base/dialog/DialogManager";
 import { S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
-import {Octokit} from 'octokit';
+import { Octokit } from 'octokit';
 import p from "path";
+import Buffer from 'buffer';
 interface Ghctx {
     kit: Octokit;
     rootPath: string;
@@ -11,50 +12,51 @@ interface Ghctx {
     fs: FSProviderAPI;
 }
 interface GtreeEntry {
-    path: string;
-    mode: string;
-    type: string;
-    sha: string;
+    path?: string;
+    mode?: "100644" | "100755" | "040000" | "160000" | "120000";
+    type?: "blob" | "tree" | "commit";
+    sha?: string | null;
+    content?: string;
 }
 
 async function ct(ghCtx: Ghctx, fs: FSProviderAPI, path: string) {
-  let fstat = await fs.stat(path);
-  let isDirectory = (fstat.mode & S_IFMT) === S_IFDIR; 
-  let {kit} = ghCtx;
-  let currentElement = {
-    path: path.split('/').slice(-1)[0],
-    mode: isDirectory ? "040000" : "100644",
-    type: isDirectory ? "tree" : "blob",
-    sha: "",
-    content: undefined
-  };
-  if (isDirectory) {
-    // get the sha file;
-    let theTree = await craftTree(ghCtx, ct, path);
-    let reqObject = {
-      tree: theTree
-    };
-    // let r = await githubApiRequest(ghCtx.ghApiToken, 'POST', `/repos/${ghCtx.owner}/${ghCtx.repo}/git/trees`, reqObject);
-    let r = await kit.request("POST /repos/{owner}/{repo}/git/trees", {
-        owner: ghCtx.username,
-        repo: ghCtx.reponame,
-        ...reqObject
-    });
-    currentElement.sha = r.data.sha;
-  }
-  else {
-    let d = await fs.readLargeFile(path);
-    let ab = await d.arrayBuffer();
-    let b = Buffer.from(ab).toString('base64');
-    let bsha = await kit.request("POST /repos/{owner}/{repo}/git/blobs", {
-        owner: ghCtx.username,
-        repo: ghCtx.reponame,
-        content: b,
-        encoding: "base64"
-    });
-    currentElement.sha = bsha.data.sha;
-  }
-  return currentElement;
+    let fstat = await fs.stat(path);
+    let isDirectory = (fstat.mode & S_IFMT) === S_IFDIR;
+    let { kit } = ghCtx;
+    let currentElement = {
+        path: p.basename(path),
+        mode: isDirectory ? "040000" : "100644",
+        type: isDirectory ? "tree" : "blob",
+        sha: "",
+        content: undefined
+    } as GtreeEntry;
+    if (isDirectory) {
+        // get the sha file;
+        let theTree = await craftTree(ghCtx, ct, path);
+        let reqObject = {
+            tree: theTree
+        };
+        // let r = await githubApiRequest(ghCtx.ghApiToken, 'POST', `/repos/${ghCtx.owner}/${ghCtx.repo}/git/trees`, reqObject);
+        let r = await kit.request("POST /repos/{owner}/{repo}/git/trees", {
+            owner: ghCtx.username,
+            repo: ghCtx.reponame,
+            ...reqObject
+        });
+        currentElement.sha = r.data.sha;
+    }
+    else {
+        let d = await fs.readLargeFile(path);
+        let ab = await d.arrayBuffer();
+        let b = Buffer.Buffer.from(ab).toString('base64');
+        let bsha = await kit.request("POST /repos/{owner}/{repo}/git/blobs", {
+            owner: ghCtx.username,
+            repo: ghCtx.reponame,
+            content: b,
+            encoding: "base64"
+        });
+        currentElement.sha = bsha.data.sha;
+    }
+    return currentElement;
 }
 
 /**
@@ -63,33 +65,47 @@ async function ct(ghCtx: Ghctx, fs: FSProviderAPI, path: string) {
  * @param currentPath Current path
  * @returns Tree sha
  */
-async function craftTree(gitCtx: Ghctx, cb: (gitCtx: Ghctx, fs: FSProviderAPI, path: string) => Promise<any> | any, path = gitCtx.rootPath, o = [] as any[]) {
+async function craftTree(gitCtx: Ghctx, cb: (gitCtx: Ghctx, fs: FSProviderAPI, path: string) => Promise<GtreeEntry> | GtreeEntry, path = gitCtx.rootPath, o = [] as GtreeEntry[]) {
 
-  let arr = await gitCtx.fs.readdir(path);
+    let arr = await gitCtx.fs.readdir(path);
 
-  for (let s of arr) {
-    o.push(await cb(gitCtx, gitCtx.fs, p.resolve(path, s)));
+    for (let s of arr) {
+        o.push(await cb(gitCtx, gitCtx.fs, p.resolve(path, s)));
 
-  }
-  return o;
+    }
+    return o;
 }
 
 export class SrcControlGit {
     fs: FSProviderAPI;
     octokit?: Octokit;
-    repo: string|null = null;
-    owner: string|null = null; 
-    static fromPat(fs: FSProviderAPI, pat: string) {
+    repo: string | null = null;
+    owner: string | null = null;
+    static async fromPat(fs: FSProviderAPI, pat: string) {
         let scgit = new SrcControlGit(fs);
         scgit.octokit = new Octokit({
             auth: pat
         });
+        if (!(await scgit.validate())) {
+            return undefined;
+        }
         return scgit;
+    }
+    async validate(): Promise<boolean> {
+        try {
+            if (!this.octokit) {
+                return false;
+            }
+            await this.octokit.rest.users.getAuthenticated()
+            return true;
+        } catch {
+            return false;
+        }
     }
     setRepo(repo: string) {
         this.repo = repo;
     }
-    setOwner(owner:string) {
+    setOwner(owner: string) {
         this.owner = owner;
     }
     constructor(fs: FSProviderAPI) {
@@ -107,9 +123,49 @@ export class SrcControlGit {
             rootPath
         };
     }
-    async push(path: string) {
+    async push(path: string, branch: string = "main", message: string = "No message entered") {
         let gctx = this.getGitCtx(path);
-        await craftTree(gctx, ct);
+        let { kit } = gctx;
+        let rootTree = await ct(gctx, this.fs, path);
+        if (!rootTree.sha) {
+            throw new Error("SHA failed to commit.");
+        }
+        let refData = await kit.rest.git.getRef({
+            repo: gctx.reponame,
+            owner: gctx.username,
+            ref: "heads/" + branch
+
+        });
+
+        let nwCom = await kit.rest.git.createCommit({
+            owner: gctx.username,
+            repo: gctx.reponame,
+            message: "Test",
+            tree: rootTree.sha,
+            parents: [refData.data.object.sha]
+        });
+        await kit.rest.git.updateRef({
+            ref: "heads/" + branch,
+            repo: gctx.reponame,
+            owner: gctx.username,
+            "sha": nwCom.data.sha
+        });
+
+    }
+    async pull(path: string, branch: string = "main", commitSha?: string) {
+        let gctx = this.getGitCtx(path);
+        let { kit, reponame: repo, username: owner} = gctx;
+        let r = await kit.rest.git.getRef({
+            repo,
+            owner,
+            ref: "heads/"+branch
+        });
+        let commit = await kit.rest.git.getCommit({
+            commit_sha: r.data.object.sha,
+            repo,
+            owner
+        });
+        let ctree = commit.data.tree.sha;
     }
 
     /**

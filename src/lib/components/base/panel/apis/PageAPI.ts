@@ -53,7 +53,7 @@ export class PageAPI {
     rc: ResourceLinkContext;
     rootURL: string;
     async getFromPat(pat: string) {
-        return SrcControlGit.fromPat(await this.fs, pat);
+        return await SrcControlGit.fromPat(await this.fs, pat);
     }
     dialogManager: DialogManager | null = null;
     constructor(rc: ResourceLinkContext, rootURL = "file:///", dialogManager: DialogManager | null = null) {
@@ -66,12 +66,16 @@ export class PageAPI {
 
         })
     }
+    _fileconfig?: FileConfig;
     get fileconfig() {
         return new Promise<FileConfig>(async (resolve) => {
+            
             try {
+
                 let fs = await this.fs;
                 let asLarge = await fs.readLargeFile(path.resolve(new URL(this.rootURL).pathname, "cryolabs.conf"));
-                resolve(toml.parse(await asLarge.text()));
+                this._fileconfig = toml.parse(await asLarge.text())
+                resolve(this._fileconfig);
             } catch {
                 resolve({});
             }
@@ -83,7 +87,12 @@ export class PageAPI {
     async setFileConfig(s: FileConfig) {
         return navigator.locks.request("config-lock", async () => {
             let fs = await this.fs;
-            await fs.createFile(path.resolve(this.rootPath, "cryolabs.conf"));
+            try {
+                await fs.createFile(path.resolve(this.rootPath, "cryolabs.conf"));
+            } catch {
+
+            }
+            this._fileconfig = {...s};
             await fs.writeFile(path.resolve(this.rootPath, "cryolabs.conf"), new TextEncoder().encode(toml.stringify(s as toml.TomlTable)).buffer);
 
         });

@@ -64,7 +64,7 @@ export class FileEntry extends TreeItem {
                         await f.mkdir(nwPath, { recursive: false });
                         setTimeout(() => {
                             ft.rename(nwPath);
-                        }, 10);
+                        }, 100);
                     },
                     label: "Create new directory",
                     id: "create-directory",
@@ -80,7 +80,7 @@ export class FileEntry extends TreeItem {
                         
                         setTimeout(()=>{
                             ft.rename(nwPath);  
-                        },10);
+                        },100);
                     },
                     label: "Create new file",
                     id: "create-file",

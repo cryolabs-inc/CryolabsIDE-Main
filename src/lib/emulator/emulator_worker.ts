@@ -8,7 +8,7 @@ Object.defineProperty(globalThis, 'process', { value: undefined });
 import * as comlink from 'comlink';
 
 import { Emitter } from "$lib/base/events";
-import { fs, fsP, saveIndex } from "$lib/base/fs";
+import { fs, fsP, saveIndex, webfs } from "$lib/base/fs";
 import type { ConnectParams, ExtensionAPI, FSDirent, FSProviderAPI, ShellAPI } from "./types";
 import px from "path";
 import { Errno, withErrno } from "kerium";
@@ -412,9 +412,12 @@ class FSProviderInternalImpl implements FSProviderAPI {
 
     async readLargeFile(p: string): Promise<File> {
         return this.withLock(p, async () => {
-            let dat = await fsP.readFile(p) as Uint8Array<ArrayBuffer>;
-            let st = await fsP.stat(p);
-            return new File([dat], px.basename(p), { lastModified: st.mtimeMs });
+            try {
+            return await (await webfs.get("file",p)).getFile()
+            } catch (E) {
+                console.error("failed to retr file.");
+                throw E;
+            }
         });
     }
 

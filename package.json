@@ -48,6 +48,7 @@
 		"@xterm/xterm": "^6.0.0",
 		"@zenfs/core": "^2.4.4",
 		"@zenfs/dom": "^1.2.6",
+		"buffer": "^6.0.3",
 		"comlink": "^4.4.2",
 		"file-type": "^21.3.0",
 		"filer": "^1.4.1",
