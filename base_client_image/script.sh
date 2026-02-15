@@ -1,5 +1,6 @@
 echo Setting up 
 cp /mnt/custom_init /etc/init.d/custom_init
+g++ /mnt/mu-cxx/main.cc -m32 -static -o /usr/bin/mu
 chmod +x /etc/init.d/custom_init
 rc-update add custom_init default
 ln -s /etc/init.d/agetty /etc/init.d/agetty.ttyS0
