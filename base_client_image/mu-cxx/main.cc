@@ -625,11 +625,7 @@ int handle_start_proc_pty(ConnectionState *conn_state, int message_id,
   int pty_fd;
   int chld = forkpty(&pty_fd, NULL, NULL, NULL);
   if (chld == 0) {
-    // in children of pty.
-    // Don't call setsid() here — forkpty() already created a new session
-    // and set the slave PTY as the controlling terminal. Calling setsid()
-    // again would detach the controlling terminal, preventing SIGWINCH
-    // delivery on resize.
+    setsid();
     execvp(process_name.c_str(), (char*const*)argv_ptrs.data());
     perror("execlp");
     _exit(1);
