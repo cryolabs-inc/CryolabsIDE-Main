@@ -21,7 +21,7 @@
     import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
     import { Emitter } from "$lib/base/events";
     let {
-        target = "default",
+        target = crypto.randomUUID(),
         showTabs = true,
         showAddressBar = false,
         onNewTab,
@@ -30,7 +30,7 @@
             id: "default",
             name: "Default tab",
             objectURL: "about:blank",
-            state: "loading"
+            state: "loading",
         }
     }: {
         target?: string;
@@ -65,14 +65,17 @@
 
             activeTabsChanged.dispose();
             tabListChanged.dispose();
+            items.forEach(v=>{
+                v.closeEvent?.emit();
+            })
         }
     })
     let rctx = useResourceLinkCtx();
     export function tab_open({ link, target: linkTarget = target }: {link: string, target?: string}, addANewOneEitherway: boolean = false)  {
-        if (!linkTarget.startsWith("_") && target !== linkTarget) {
+        if (!linkTarget.startsWith("_") && target !== linkTarget && !addANewOneEitherway) {
             return;
         }
-        if (linkTarget.startsWith("_") && target !== "default") {
+        if (linkTarget.startsWith("_") && target !== "default" && !addANewOneEitherway) {
             return;
         }
         if (target !== "_blank" && !addANewOneEitherway) {
@@ -88,12 +91,14 @@
             items[seledIdx] = seled;
             return;
         }
+        let closeEvent = new Emitter<void>();
         let newItem = {
             id: crypto.randomUUID(),
             name: ename,
             objectURL: link,
             clickable: true,
             state: "loading",
+            closeEvent
         } as TabItem;
         items.push(newItem);
         selectedTabItem = newItem.id;
@@ -133,7 +138,6 @@
     export const deserialize = (val: {it: TabItem[], seledId: string})=>{
         if (val instanceof Array) {
             items = val;
-            console.log("Migrating");
             return;
         }
         items = val.it;
@@ -161,6 +165,7 @@
             {/if}
             <button
                 onclick={(e) => {
+                    tabItem.closeEvent?.emit();
                     let idx = items.findIndex((v) => v.id === tabItem.id);
                     if (idx >= 0 && idx < items.length) {
                         // don't change
@@ -204,7 +209,7 @@
         <div></div>
     {:then s}
         {#if s?.Comp}
-            <s.Comp {...s.props}></s.Comp>
+            <s.Comp onUnload={tabItem.closeEvent?.event} {...s.props}></s.Comp>
         {/if}
         {#if s?.snip}
             {@render s.snip()}
@@ -223,7 +228,6 @@
                 ondrop={e=>{
                     if (e.dataTransfer) {
                         let textData = e.dataTransfer.getData('text');
-                        console.log(textData);
                         try {
                            let parsed =  JSON.parse(textData) as {type: "url", url: string};
                            if (parsed.type === "url") {

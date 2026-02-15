@@ -149,7 +149,6 @@ class FidInfo implements Qid {
     childrenCache: Map<string, FidInfo> = new Map(); // Cache children by name
     changeEmitter: Emitter<FSChange>;
     async emitChange(path: string, method: string, isEntryChange: boolean) {
-        console.log("chemitter", {path, method, isEntryChange});
         this.changeEmitter.emit({
             path,
             method,
@@ -419,7 +418,6 @@ class RawAccesHandle extends FidInfo {
     }
 
     async open(mode: number): Promise<void> {
-        console.log(webfs);
         if (this.type !== 0) {
             throw new Error("cant use raw access with directories");
         }
@@ -432,12 +430,9 @@ class RawAccesHandle extends FidInfo {
             }
         }
         this.openMode = mode;
-        this.opfsHandle = await (await webfs.get("file", this.pathId)).createSyncAccessHandle();
+        this.opfsHandle ??= await (await webfs.get("file", this.pathId)).createSyncAccessHandle();
         let idx = webfs.index.get(this.pathId);
-        console.log(idx?.size);
         idx && this.opfsHandle.truncate(idx.size);
-        console.log("Truncate?: " + ((mode & O_TRUNC) === O_TRUNC))
-        console.log(openFlagsToString(this.fs, mode));
 
         if (mode & O_TRUNC) {
             this.opfsHandle.truncate(0);
@@ -650,7 +645,6 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     }
                     await fidInfo.open(flags);
                     let qid = fidInfo.asQid();
-                    console.log("Using msize: " + msize);
                     methodSpecific = MarshallArray([
                         ["u8array", fmtQid(qid)],
                         ["u32", msize - 24]
@@ -850,7 +844,6 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                 case p9_msg_t.P9_TVERSION: {
                     const [, [msizeu]] = UnmarshallArray(msgbytes, [["u32"], ["sl"]]);
                     msize = msizeu;
-                    console.log("MSIZE: " + msize);
                     methodSpecific = MarshallArray([
                         ["u32", msize],
                         ["sl", "9P2000.L"]
@@ -948,7 +941,6 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                 case p9_msg_t.P9_TREAD: {
                     // console.time("READ");
                     const [, [fid, offset, count]] = UnmarshallArray(msgbytes, [["u32"], ["u64"], ["u32"]]);
-                    console.log("cnt: " + count);
 
                     let f = fids[fid];
 

@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-    import { BookIcon, CircleQuestionMarkIcon, FileIcon } from "@lucide/svelte";
+    import { BookIcon, CircleQuestionMarkIcon, FileIcon, GitBranchIcon } from "@lucide/svelte";
 
     import { getAllContexts, onMount } from "svelte";
     import type { SidePanelItem } from "$lib/components/base/panel/SidePanelItem";
@@ -14,10 +14,7 @@
         ResizablePaneGroup,
     } from "$lib/components/ui/resizable";
     import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
-    import {
-        ResourceManager,
-        setResourceManager,
-    } from "$lib/base/resource";
+    import { ResourceManager, setResourceManager } from "$lib/base/resource";
     import { PageAPI, setPageAPI } from "../panel/apis/PageAPI";
     import {
         ResourceLinkContext,
@@ -28,7 +25,11 @@
     import Emulator from "../emulator/Emulator.svelte";
     import { setWM, WM } from "../windows/WM";
     import StatusBar from "../statusbar/StatusBar.svelte";
-    let { basePath = "/" }: { basePath?: string } = $props();
+    import Git from "../git/Git.svelte";
+    import DialogContainer from "$lib/base/dialog/DialogContainer.svelte";
+
+    let { basePath = "/", rootURL}: { basePath?: string, rootURL: string } = $props();
+
     class FullEditorPrefs {
         lowerTabsHeight: number = 20;
         upperTabsHeight: number = 80;
@@ -68,6 +69,13 @@
             tooltip: "File",
             panel: FilePanel,
         },
+        {
+            id: "git",
+            Icon: GitBranchIcon,
+            clickable: true,
+            tooltip: "File",
+            panel: Git
+        }
     ] as SidePanelItem<unknown>[];
     let items: SidePanelItem<unknown>[] | undefined = $state();
     async function updItems() {
@@ -102,10 +110,11 @@
     setResourceManager(resourceManager);
     let rc = new ResourceLinkContext();
     setResourceLinkCtx(rc);
-    let papi = new PageAPI(rc);
+    let diagContainer = $state<DialogContainer>();
+
+    let papi = $derived(new PageAPI(rc, rootURL));
     setPageAPI(papi);
     let onResize = new Emitter<void>();
-
     let lowerTab = $state<ResizablePane>();
     let upperTab = $state<ResizablePane>();
     let stimulusPane = $state<ResizablePane>();
@@ -113,6 +122,7 @@
     wm.contexts = getAllContexts();
     setWM(wm);
     onMount(async () => {
+        papi.dialogManager = diagContainer?.getManager()||null;
         if (!lowerTab || !upperTab || !stimulusPane) {
             return;
         }
@@ -134,7 +144,6 @@
             d.dispose();
         });
     });
-    console.log(papi);
     function newResizeHandler(val: (newSize: number) => void) {
         async function postResize(newSize: number) {
             onResize.emit();
@@ -152,6 +161,7 @@
 </script>
 
 <div class="w-full h-full flex flex-col">
+    <DialogContainer bind:this={diagContainer} />
     <div class="w-full h-full flex flex-row">
         <ResizablePaneGroup direction="horizontal">
             <ResizablePane minSize={20}>
@@ -180,7 +190,7 @@
                             fullEditorPrefs.upperTabsHeight = ns;
                         })}
                     >
-                        <Browser bind:this={upperBrowser}></Browser>
+                        <Browser bind:this={upperBrowser} target="upper"></Browser>
                     </ResizablePane>
                     <ResizableHandle></ResizableHandle>
                     <ResizablePane
@@ -197,6 +207,7 @@
                 </ResizablePaneGroup>
             </ResizablePane>
         </ResizablePaneGroup>
+
         <Emulator onResize={onResize.event} {basePath}></Emulator>
     </div>
     <div>

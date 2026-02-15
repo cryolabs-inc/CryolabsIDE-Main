@@ -64,7 +64,7 @@ export class FileEntry extends TreeItem {
                         await f.mkdir(nwPath, { recursive: false });
                         setTimeout(() => {
                             ft.rename(nwPath);
-                        }, 10);
+                        }, 100);
                     },
                     label: "Create new directory",
                     id: "create-directory",
@@ -72,7 +72,6 @@ export class FileEntry extends TreeItem {
                 },
                 {
                     async callback(treeDataProvider, treeItem, hbe) {
-                        console.log("nwfile");
                         let ft = treeDataProvider as FT;
                         let f = await papi.fs;
                         let nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
@@ -80,7 +79,7 @@ export class FileEntry extends TreeItem {
                         
                         setTimeout(()=>{
                             ft.rename(nwPath);  
-                        },10);
+                        },100);
                     },
                     label: "Create new file",
                     id: "create-file",
@@ -158,9 +157,27 @@ export class FT implements TreeDataProvider<FileEntry> {
         this.#selectedEvt.emit({ selectedPaths: this.selectedEntries });
     }
 
-    registerEntry(entry: FileEntry) {
-        if (!this.allEntries.find(e => e.filePath === entry.filePath)) {
+    registerEntry(entry: FileEntry, index?: number) {
+        const existingIdx = this.allEntries.findIndex(e => e.filePath === entry.filePath);
+
+        if (existingIdx !== -1) {
+            // Remove from current position if already registered
+            this.allEntries.splice(existingIdx, 1);
+        }
+
+        if (index !== undefined && index >= 0) {
+            // Insert at specified position
+            this.allEntries.splice(index, 0, entry);
+        } else {
+            // Append to end if no index specified
             this.allEntries.push(entry);
+        }
+    }
+
+    unregisterEntry(entry: FileEntry) {
+        const idx = this.allEntries.findIndex(e => e.filePath === entry.filePath);
+        if (idx !== -1) {
+            this.allEntries.splice(idx, 1);
         }
     }
 

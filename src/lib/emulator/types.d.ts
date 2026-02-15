@@ -36,7 +36,7 @@ export interface ExtensionAPI {
 	/**
 	 * Open a pty to a shell. Helps users run isolated shells.
 	 */
-	openPtyToShell(cmd: string, dataCallback: (data: Uint8Array)=>void, closeCallback: ()=>void): Promise<ShellAPI>
+	openPtyToShell(cmd: string, args: string[]): Promise<{kill(): Promise<number>, wait(): Promise<number>, streams: ()=>Promise<{readable: ReadableStream, writable: WritableStream}>}>
 }
 interface FSDirent {
     name: string;
@@ -64,6 +64,7 @@ export interface FSProviderAPI {
     mkdir(path: string, opts?: {recursive: boolean}): Promise<void>;
     truncate(path: string, nwSize: number): Promise<void>;
     createFile(path: string): Promise<void>;
+    readdir(path: string): Promise<string[]>;
 }
 
 export interface Connection {

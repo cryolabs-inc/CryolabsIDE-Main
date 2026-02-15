@@ -9,6 +9,7 @@ import type { FSProviderAPI } from '$lib/emulator/types';
 import FileTreeViewer from "./viewers/file/FileTreeViewer.svelte";
 import HtmlViewer from "./viewers/HtmlViewer.svelte";
 import { O_TRUNC } from "@zenfs/core/constants.js";
+import Git from "./viewers/git/Git.svelte";
 // --- Resource Types ---
 
 
@@ -157,6 +158,9 @@ export interface ResourceHandlerEntry {
 type RR<T> = T extends ResourceResponse<infer X, infer Y> ?
     ResourceResponse<X, Y> : never;
 export class SimpleResourceHandler implements ResourceHandlerEntry {
+    pathname(request: Request) {
+        return new URL(request.url).pathname;
+    }
     async doGet(request: Request): Promise<ResourceResponse> {
         return ResourceResponse.methodNotAllowed();
     }
@@ -361,6 +365,19 @@ export class AboutManager extends SimpleResourceHandler {
         return ResourceResponse.notFound();
     }
 }
+export class GitManager extends SimpleResourceHandler {
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+        let path = this.pathname(request);
+        
+        if (path === "/ui") {
+            return ResourceResponse.ok<[typeof Git]>("panel", {
+                component: Git,
+                props: {}
+            });
+        }
+        return ResourceResponse.notFound();
+    }
+}
 // --- Resource Manager ---
 
 export class ResourceManager {
@@ -396,7 +413,8 @@ export class ResourceManager {
             .registerScheme("http", new HttpHandler())
             .registerScheme("https", new HttpHandler())
             .registerScheme("sample", new Sample())
-            .registerScheme('about', new AboutManager());
+            .registerScheme('about', new AboutManager())
+            .registerScheme("git", new GitManager());
     }
 }
 

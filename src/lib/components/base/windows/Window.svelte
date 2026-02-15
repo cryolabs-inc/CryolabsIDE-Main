@@ -14,6 +14,7 @@
     let b = $state<Browser>();
     let title = $state<string>("Loading...");
     onMount(()=>{
+        
         b?.onActiveTabChanged((dat)=>{
             title = dat.name;
         })
@@ -25,8 +26,8 @@
     }
 </script>
 
-<div class={cn(px.class, `relative`)} in:scale out:scale={{duration: 100}}>
-    <div class="w-full flex flex-row ">
+<div class={cn(px.class, `relative resize`)} in:scale out:scale={{duration: 100}}>
+    <div class="w-full flex flex-row toolbar-win">
         <button class="hover:text-red-400" onclick={e=>{
             px.close();
         }} ><XIcon></XIcon></button>

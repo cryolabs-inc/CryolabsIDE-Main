@@ -4,16 +4,19 @@
     import * as comlink from 'comlink';
     import { onMount } from "svelte";
     import yaml from 'yaml';
-    onMount(async () => {
-        
-    });
+    let loc = location.search;
+    let rootURL = "file:///";
+    let u = new URLSearchParams(loc).get('url');
+    if (u) {
+        rootURL = u;
+    }
 </script>
 {#await fetch("/manual_config.yaml").then(v=>v.text()).then(v=>yaml.parse(v))}
 
 
 {:then config}
-    <FullEditor basePath={config.emulator_base}></FullEditor>
+    <FullEditor basePath={config.emulator_base} {rootURL}></FullEditor>
 {:catch}
-    <FullEditor basePath={"/"}></FullEditor>
+    <FullEditor basePath={"/"} {rootURL}></FullEditor>
 
 {/await}

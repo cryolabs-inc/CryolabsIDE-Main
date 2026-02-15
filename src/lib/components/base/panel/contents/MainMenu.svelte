@@ -3,7 +3,9 @@
     import { getWM } from "../../windows/WM";
     let wm = getWM();
     
-
+    let cmdSearchParams = new URLSearchParams();
+    cmdSearchParams.append("cmd", "/bin/sh");
+    cmdSearchParams.append("args", "-i");
 </script>
 <div class="h-full">
 <div class="text-xl">Welcome to CryolabsIDE!</div>
@@ -22,5 +24,8 @@
     </Link>
     <Link href="term:///serial0" target="_blank" isPopup={true}> 
         open serial0 in new window.
+    </Link>
+    <Link href={"term:///pty?"+cmdSearchParams.toString()} target="tabs_lower" isPopup={true}> 
+        open /bin/bash in new window.
     </Link>
 </div>
