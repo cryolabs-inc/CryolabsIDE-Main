@@ -7,7 +7,7 @@
     let wm = getWM();
     
     let cmdSearchParams = new URLSearchParams();
-    cmdSearchParams.append("cmd", "/bin/sh");
+    cmdSearchParams.append("cmd", "/bin/bash");
     cmdSearchParams.append("args", "-i");
     let papi = usePageAPI();
 </script>

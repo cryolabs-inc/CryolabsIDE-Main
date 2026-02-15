@@ -193,6 +193,7 @@ export class WM {
         this.makeResizable(draggableDiv);
         this.makeDraggable(draggableDiv, draggableDiv.querySelector('.toolbar-win') as HTMLDivElement, 100);
         draggableDiv.style.position = "absolute";
+        draggableDiv.style.zIndex = "99999";
         draggableDiv.style.left = `${initX}px`;
         draggableDiv.style.top = `${initY}px`;
         draggableDiv.style.border = "2px solid var(--accent)";
