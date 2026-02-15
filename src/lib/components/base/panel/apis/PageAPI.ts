@@ -3,7 +3,7 @@ import type { Disposable } from "$lib/base/disposable";
 import { Emitter } from "$lib/base/events"
 import type { TypedEvent } from "$lib/base/events/events";
 import type { ResourceLinkContext } from "$lib/base/resourceCtx";
-import type { FSProviderAPI } from "$lib/emulator/types";
+import type { ExtensionAPI, FSProviderAPI } from "$lib/emulator/types";
 import { SrcControlGit } from "$lib/git";
 import { ConstructExtendablePromise, type ExtendablePromise } from "$lib/utils";
 import path from "path";
@@ -119,6 +119,10 @@ export class PageAPI {
         this.rc.openLink(link, target);
     }
     fsPromise: ExtendablePromise<FSProviderAPI> = ConstructExtendablePromise();
+    extPromise: ExtendablePromise<ExtensionAPI> = ConstructExtendablePromise();
+    get ext() {
+        return this.extPromise.promise;
+    }
     get fs() {
         return this.fsPromise.promise;
     }

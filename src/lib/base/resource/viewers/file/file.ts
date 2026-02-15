@@ -72,7 +72,6 @@ export class FileEntry extends TreeItem {
                 },
                 {
                     async callback(treeDataProvider, treeItem, hbe) {
-                        console.log("nwfile");
                         let ft = treeDataProvider as FT;
                         let f = await papi.fs;
                         let nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());

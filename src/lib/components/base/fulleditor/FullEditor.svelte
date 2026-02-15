@@ -144,7 +144,6 @@
             d.dispose();
         });
     });
-    console.log(papi);
     function newResizeHandler(val: (newSize: number) => void) {
         async function postResize(newSize: number) {
             onResize.emit();

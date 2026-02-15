@@ -48,15 +48,17 @@
             language: value.type,
             automaticLayout: true,
             theme: "vs-dark",
+            
         });
+        
         let watcher: Disposable | undefined = undefined;
         (async () => {
+            
             let fsp = await papi.fs;
             let watcherId = crypto.randomUUID();
             await fsp.assignId(watcherId);
             watcher = await fsp.watchForRefresh(
                 comlink.proxy(async (fsChange) => {
-                    console.log(fsChange.srcId);
                     if (fsChange.srcId === watcherId) {
                         return;
                     }

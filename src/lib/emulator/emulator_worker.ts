@@ -6,7 +6,7 @@ declare const self: DedicatedWorkerGlobalScope;
 Object.defineProperty(globalThis, 'process', { value: undefined });
 
 import * as comlink from 'comlink';
-
+import { ConnectionClient } from './connection_clientv2.mts'
 import { Emitter } from "$lib/base/events";
 import { fs, fsP, saveIndex, webfs } from "$lib/base/fs";
 import type { ConnectParams, ExtensionAPI, FSDirent, FSProviderAPI, ShellAPI } from "./types";
@@ -26,108 +26,8 @@ function getReadFrom(num: number) {
     return 'virtio-console' + num + "-output-bytes";
 }
 
-let msgHandler: ExtendablePromise<ReturnType<typeof attachMessageHandler>> = ConstructExtendablePromise();
 let Extendable = ConstructExtendablePromise<void>();
-function attachMessageHandler(emulator: any) {
-    emulator.add_listener(getReadFrom(0), (e: Uint8Array) => {
-        if (new TextDecoder().decode(e).includes("ready")) {
-            Extendable.Resolve();
-        }
-    });
-    let messages: { cid: number, msg: any }[] = [];
-    let draining = false;
 
-    async function drainer() {
-        await Extendable.promise;
-        if (draining) return;
-        draining = true;
-
-        while (messages.length > 0) {
-            const msg = messages.shift();
-            if (!msg) continue;
-            await sendMsgpackMessage(emulator, msg.cid, msg.msg);
-        }
-
-        draining = false;
-    }
-
-    function scheduleDrain(cid: number, msg: any) {
-        messages.push({ cid, msg });
-        drainer(); // triggers if not already draining
-    }
-
-    async function sendMsgpackMessage(emulator: any, cid: number, msg: any) {
-        const ua = msgpack.encode(msg);
-        const finalPkt = new Uint8Array(5 * 4 + ua.length);
-        const u32 = new Uint32Array(finalPkt.buffer, 0, 5);
-        u32.set([finalPkt.length, 1, 0, cid, 6]);
-        finalPkt.set(ua, 20);
-
-        for (let i = 0; i < finalPkt.length; i += 64) {
-            emulator.bus.send(getWriteTo(1), finalPkt.subarray(i, i + 64));
-            await new Promise(r => setTimeout(r, 3)); // reduced delay for responsiveness
-        }
-    }
-
-    const et = emulator.et = new EventTarget();
-    let bua = new Uint8Array(0);
-
-    function drainMsg(): boolean {
-        if (bua.length < 20) return false;
-
-        const view = new DataView(bua.buffer, bua.byteOffset, bua.byteLength);
-        const totalLen = view.getUint32(0, true);
-        const magic = view.getUint32(8, true);
-        const packetCid = view.getUint32(12, true);
-
-        if (bua.length < totalLen) return false;
-
-        const fullMsg = bua.slice(0, totalLen);
-        et.dispatchEvent(new CustomEvent(`conn-${packetCid}-output`, { detail: fullMsg }));
-        bua = bua.slice(totalLen); // advance buffer
-        return true;
-    }
-
-    emulator.add_listener(getReadFrom(2), function on(dat: Uint8Array) {
-        const view = new DataView(dat.buffer, dat.byteOffset, dat.byteLength);
-        const magic = view.getUint32(8, true);
-        const packetCid = view.getUint32(12, true);
-
-        if (magic === 0xDEAD) {
-            et.dispatchEvent(new CustomEvent(`conn-${packetCid}-close`));
-            // emulator.remove_listener(getReadFrom(2), on);
-            return;
-        }
-
-        // Append to buffer (avoid copying if possible)
-        const combined = new Uint8Array(bua.length + dat.length);
-        combined.set(bua, 0);
-        combined.set(dat, bua.length);
-        bua = combined;
-
-        // Drain all full messages
-        while (drainMsg());
-    });
-
-    function recieveForCid(cid: number, dataCb: (dat: Uint8Array) => void, closeCb: () => void) {
-        et.addEventListener(`conn-${cid}-output`, (a) => {
-            const evt = a as CustomEvent<Uint8Array>;
-            dataCb(evt.detail);
-        });
-        et.addEventListener(`conn-${cid}-close`, () => {
-            closeCb();
-        });
-    }
-
-    function sendForCid(cid: number, msg: any) {
-        scheduleDrain(cid, msg);
-    }
-
-    return {
-        recieveForCid,
-        sendForCid
-    };
-}
 let queryParameters = new URLSearchParams(location.search);
 function getSrvRoot() {
 
@@ -138,180 +38,7 @@ function receiveMsgpackMessage(emulator: any, cid: number, onMessage: (msg: Uint
 
 }
 let globChEmitter = new Emitter<FSChange>();
-class MessageLoop {
-    emulator: any;
-    // buffers: [];
-    // totalSize: number;
-    // rx_addr: number;
-    static _instance: MessageLoop;
-    static ready: ExtendablePromise<void> = ConstructExtendablePromise<void>();
-    static add_data_listener: () => void;
-    // saveHere: EventTarget;
-    static saveHere: EventTarget;
-    static run_program: (emulator: any, cmd: string, outputStd: (data: string) => void, outputErr: (data: string) => void) => { input: (data: string) => void, wait: () => Promise<number>, kill: (signal: number) => Promise<void> };
-    async run_program(emulator: any, cmd: string, outputStd: (data: string) => void, outputErr: (data: string) => void) {
-        let conn = this.connect();
-        let waiter = ConstructExtendablePromise<number>();
-        conn.pktListener.addEventListener("incomingPkt", (event) => {
-            let incomingPacket = event as CustomEvent<Uint8Array>;
-            try {
-                if (new TextDecoder().decode(incomingPacket.detail).includes('\x1F')) {
-                    waiter.Resolve(parseInt(new TextDecoder().decode(new Uint8Array(incomingPacket.detail.subarray(1)))));
-
-                    return;
-                }
-                outputStd(new TextDecoder().decode(incomingPacket.detail));
-            } catch { };
-        });
-        await conn.send("echo hi\n");
-        return {
-            async input(data: string) {
-                return conn.send(data);
-            },
-            wait() {
-                return waiter;
-            },
-            async kill(signal: number) {
-                conn.disconnect();
-            }
-        };
-    }
-    static get instance() {
-        this.saveHere ??= new EventTarget();
-        this._instance ??= new MessageLoop(this.saveHere);
-
-        return this._instance;
-
-    }
-    static addSaveHandler(handler: EventListenerOrEventListenerObject) {
-
-        this.saveHere.addEventListener('savenow', handler);
-    }
-    static virtio_console_bus: (emulator: any) => void = () => { };
-    static onEmulatorLoaded(emulator: any) {
-
-    }
-    buffer = {
-        ua: new Uint8Array(),
-        total_len: 0
-    };
-    async connect_msgpack(emulator: any = this.emulator, payload: string, onData: (dat: Uint8Array) => void, onClose: () => void) {
-        let evtTarget = new Emitter<Uint8Array>();
-        let mh = await msgHandler.promise;
-
-        let cid = this.cid++;
-
-        mh.sendForCid(cid, {
-            "type": "launchPTY",
-            "payload": payload
-        });
-
-        mh.recieveForCid(cid, (dat: Uint8Array) => {
-            let ad = dat.subarray(20);
-            let d = (msgpack.decode(ad) as { payload: Uint8Array }).payload;
-            evtTarget.emit(d)
-            onData(d);
-        }, onClose);
-
-        return {
-            pktListener: evtTarget.event,
-            cid,
-            async disconnect() {
-                mh.sendForCid(cid, {
-                    "type": "kill",
-                    payload: cid,
-                });
-            },
-            async send(msg: Uint8Array) {
-                mh.sendForCid(cid, {
-                    type: "input",
-                    payload: msg
-                });
-            }
-        };
-    }
-    cid: number = 0;
-    connect(emulator: any = this.emulator) {
-        let cid = this.cid++;
-
-        function internalConnect(cid: number) {
-            emulator.bus.send('virtio-console1-input-bytes', new Uint8Array(new Uint32Array([20, 1, 0, cid, 2]).buffer));
-        }
-        let evtTarget = new EventTarget();
-        internalConnect(cid);
-        emulator.add_listener(getReadFrom(2), (ua: Uint8Array) => {
-            //             typedef struct IPCMessage {
-            //   int msg_len_total;
-            //   int msg_id, theError;
-            //   int cid; // -1 for a new connection, nonnegative if we are requesting for a
-            //            // connection id to be used
-            //   enum MsgType type;
-            //   char request[];
-            // } IPCMessage;
-            let header = new Uint32Array(ua.buffer.slice(0, 20));
-
-            let c = header[3];
-            if (c !== cid) {
-                return;
-            }
-            let theRealPkt = new Uint8Array(ua.buffer.slice(24));
-
-            evtTarget.dispatchEvent(new CustomEvent("incomingPkt", { detail: theRealPkt }));
-            // typedef struct NewConnectionMessageProcess {
-
-            // } NewConnectionMessageProcess; // only lanches /bin/sh anyways
-            // typedef struct NewConnectionMessageIPV4 {
-            //   enum ConnectionType type;
-            //   int32_t hostname;
-            //   int32_t port;
-            // } NewConnectionMessage;
-
-            // typedef struct DisconnectMessageIPV4 {
-            // } DisconnectMessageIPV4;
-
-            // typedef struct PktFrame {
-            //   size_t msgLen;
-            //   char dat[]; // the length comes from the total message len
-            // } PktFrame;
-            // static int epoll_fd = -1;
-            // enum STATUS { OK = 0, MORE = 1, ERROR = 2 };
-
-        });
-        return {
-            pktListener: evtTarget,
-            cid: cid,
-            disconnect() {
-                emulator.bus.send('virtio-console1-input-bytes', new Uint8Array(new Uint32Array([20, 1, 0, cid, 5]).buffer));
-            },
-            /**
-             * 
-             * You must await the promise. If you don't, you risk dropped packages and undefined behaviour
-             */
-            async send(data: string | Uint8Array): Promise<void> {
-                let buffer = data;
-                if (typeof buffer === "string") {
-                    buffer = new TextEncoder().encode(buffer);
-                }
-
-                let ba = buffer as Uint8Array;
-                let connectionPkt = [20, 1, 0, cid, 3, ba.length];
-                let header = new Uint8Array(new Uint32Array(connectionPkt).buffer);
-                let fullPkt = new Uint8Array(header.length + ba.length);
-                fullPkt.set(header, 0);
-                fullPkt.set(ba, header.length);
-                new DataView(fullPkt.buffer).setUint32(0, fullPkt.length, true);
-                emulator.bus.send('virtio-console1-input-bytes', fullPkt);
-                await new Promise(r => setTimeout(r, 500));
-            }
-        };
-    }
-
-    constructor(saveHereTarget?: EventTarget) {
-
-    }
-
-
-}
+let connection: ExtendablePromise<ConnectionClient> = ConstructExtendablePromise();
 interface ExtendablePromise<T> {
     promise: Promise<T>;
     Resolve(value: T): void;
@@ -324,7 +51,6 @@ function ConstructExtendablePromise<T>() {
     return { promise: prom, Resolve: R } as ExtendablePromise<T>;
 }
 let progressGroup: MessagePort[] = [];
-let msgLoop: ExtendablePromise<MessageLoop> = ConstructExtendablePromise();
 class FSProviderInternalImpl implements FSProviderAPI {
     fs9p: any;
     assignedId?: string;
@@ -388,7 +114,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     }
     async emitGlobal(path: string, method: string, isEntryChange: boolean = false) {
         saveIndex();
-        globChEmitter.emit({ path, method, isEntryChange, srcId: this.assignedId});
+        globChEmitter.emit({ path, method, isEntryChange, srcId: this.assignedId });
     }
     async writeFile(path: string, data: ArrayBuffer, length: number, position: number, openMode = fsP.constants.O_TRUNC): Promise<number> {
         let isNewEntry = false;
@@ -404,7 +130,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
 
             let { bytesWritten } = await fh.write(new Uint8Array(data), { length, position });
             await fh.close();
-        this.emitGlobal(path, "write", isNewEntry);
+            this.emitGlobal(path, "write", isNewEntry);
 
             return bytesWritten;
         });
@@ -413,7 +139,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     async readLargeFile(p: string): Promise<File> {
         return this.withLock(p, async () => {
             try {
-            return await (await webfs.get("file",p)).getFile()
+                return await (await webfs.get("file", p)).getFile()
             } catch (E) {
                 console.error("failed to retr file.");
                 throw E;
@@ -430,13 +156,13 @@ class FSProviderInternalImpl implements FSProviderAPI {
         return this.withLock(path, async () => await fsP.mkdir(path));
     }
     async createFile(path: string): Promise<void> {
-        return this.withLock(path, async ()=>{
+        return this.withLock(path, async () => {
 
-            let fh = await fsP.open(path, O_CREAT|O_EXCL|O_RDWR);
+            let fh = await fsP.open(path, O_CREAT | O_EXCL | O_RDWR);
             await fh.writeFile(new Uint8Array(0));
             await fh.close();
             this.emitGlobal(px.dirname(path), "createFile", true);
-        })   
+        })
     }
     async readDirectory(path: string): Promise<string[]> {
         return this.withLock(path, async () => await fsP.readdir(path));
@@ -461,10 +187,10 @@ class FSProviderInternalImpl implements FSProviderAPI {
 
     async removeEntry(path: string): Promise<void> {
 
-        
+
         return this.withLock(path, async () => {
             await fsP.rm(path);
-        this.emitGlobal(px.dirname(path), "removed", true);
+            this.emitGlobal(px.dirname(path), "removed", true);
         });
     }
 
@@ -478,22 +204,22 @@ class FSProviderInternalImpl implements FSProviderAPI {
             this.emitGlobal(px.dirname(path), "removed", true);
         });
     }
-    async mkdir(path: string, opts: { recursive: boolean; } = {recursive: false}): Promise<void> {
-        return this.withLock(path, async()=>{
+    async mkdir(path: string, opts: { recursive: boolean; } = { recursive: false }): Promise<void> {
+        return this.withLock(path, async () => {
             this.emitGlobal(px.dirname(path), "mkdir", true);
             await fsP.mkdir(path, opts);
         })
     }
     async truncate(path: string, nwSize: number): Promise<void> {
-        return this.withLock(path, async()=>{
+        return this.withLock(path, async () => {
             await fsP.truncate(path, nwSize);
-            await this.emitGlobal(path, "trunc",true);
+            await this.emitGlobal(path, "trunc", true);
         })
     }
 }
 function downloadV86(getSrvRoot: () => string) {
 
-    return import(/* @vite-ignore */ (getSrvRoot() + 'libv86.mjs'));
+    return import(/* @vite-ignore */(getSrvRoot() + 'libv86.mjs'));
 }
 
 class Connection implements Connection {
@@ -542,25 +268,27 @@ class WorkerHandler implements WorkerHandlerAPI {
             async update(progressCallback: (total: number, loaded: number) => void) {
                 await localforage.removeItem("disk_downloaded");
             },
-            async openPtyToShell(cmd: string, callback: (dat: Uint8Array) => void, closeCallback: () => void) {
-                let ml = await msgLoop.promise;
-                let session = await ml.connect_msgpack(vmi, cmd, callback, closeCallback);
+            async openPtyToShell(cmd: string, args: string[]) {
+                let conn = await connection.promise;
+
+                let proc = await conn.start_process_pty(cmd, args);
+                
+                let ts = new TransformStream<Uint8Array,Uint8Array>();
                 return comlink.proxy({
-                    async send(data: Uint8Array<ArrayBufferLike>) {
-                        session.send(data);
+                    
+                    kill: async ()=>{
+                        return proc.kill();
                     },
-                    async pull() {
-                        return new Promise<Uint8Array>((resolve) => {
-                            let evtDisposed = session.pktListener((dat) => {
-                                resolve(dat);
-                                evtDisposed.dispose();
-                            })
-                        });
+                    wait: async()=>{
+                        return proc.wait();
                     },
-                    async close() {
-                        session.disconnect();
+                    streams: async()=>{
+                        return comlink.transfer({
+                            writable: proc.pty_stream_writer,
+                    readable: proc.pty_stream_reader,
+                        }, [proc.pty_stream_reader, proc.pty_stream_writer]);
                     }
-                } as ShellAPI);
+                });
             }
         };
         comlink.expose(e, param.extensionApi);
@@ -693,8 +421,22 @@ async function workerCode(getSrvRoot: () => string) {
     // Object.defineProperty(self, 'msgLoop', {value: new MessageLoop(), configurable: true, writable: true});
     initinstance.add_listener("emulator-ready", () => {
         vm_instance.Resolve(initinstance);
-        msgHandler.Resolve(attachMessageHandler(initinstance));
-        msgLoop.Resolve(new MessageLoop());
+        initinstance.add_listener(getReadFrom(1), function _ref() {
+            let rs = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    initinstance.add_listener(getReadFrom(0), (dat: Uint8Array) => {
+                        controller.enqueue(dat);
+                    })
+                }
+            });
+            let ws = new WritableStream<Uint8Array>({
+                write(chunk, controller) {
+                    initinstance.bus.send(getWriteTo(0), chunk);
+                }
+            });
+            connection.Resolve(new ConnectionClient(rs, ws));
+            initinstance.remove_listener(getReadFrom(1), _ref);
+        })
     });
 
 }

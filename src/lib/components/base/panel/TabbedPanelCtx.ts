@@ -1,4 +1,5 @@
 import { Emitter } from "$lib/base/events";
+import type { TypedEvent } from "$lib/base/events/events";
 import { createContext } from "svelte";
 export interface TabItem {
     id: string;
@@ -6,6 +7,7 @@ export interface TabItem {
     objectURL: string;
     clickable: boolean;
     state: "loading"|"none"|"complete";
+    closeEvent?: Emitter<void>;
 }
 export class TabContentsCtx<Tab = TabItem> {
     onBeforeClose: Emitter<void> = new Emitter();

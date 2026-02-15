@@ -23,7 +23,6 @@ self.onconnect = (e) => {
                 if (!sessionLeader) {
                     throw new Error("Locking while having no session leader.");
                 }
-                console.log(sessionLeader.lockName);
                 navigator.locks.request(sessionLeader.lockName,{"mode": "exclusive"}, ()=>{
                     console.debug('This is where we migrate session leaders and start a new worker in a child.');
                     sessionLeader = undefined;

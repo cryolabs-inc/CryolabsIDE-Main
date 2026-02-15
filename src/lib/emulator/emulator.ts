@@ -4,7 +4,6 @@ import type { Msg, WorkerMessageData } from './types';
 let singletonWorker: Worker|undefined = undefined;
 export const getEmulatorPort = function (basePath: string) {
     return new Promise<MessagePort>((resolve) => {
-        console.log("Shared worker fetching");
         let s = new SW({
             name: "swa"
         });
@@ -15,20 +14,16 @@ export const getEmulatorPort = function (basePath: string) {
                 case 'GetWorkerPortRequest':
                     throw new Error("request to client");
                 case 'GetWorkerPortResponse': {
-                    console.log(data);
                     if (data.mode === "sessionleader") {
                         let sessionLeaderLock = data.sessionLeaderLock!;
-                        console.log(sessionLeaderLock);
                         navigator.locks.request(sessionLeaderLock,{mode: "exclusive"} , () => {
                             return new Promise<void>((resolve) => {
                                 // never resolve
                                 
                             });
                         }).then(()=>{
-                            console.log('relinquished');
                         });
                         data.msgPort.addEventListener('message', (e)=>{
-                            console.log('hadling getworker port request.');
                             if (e.data.type === "GetWorkerPortRequest") {
                                 singletonWorker?.postMessage({start: false, basePath}, [e.ports[0]]);
                                 data.msgPort.postMessage({"type": "GetWorkerPortResponse", id: e.data.id});

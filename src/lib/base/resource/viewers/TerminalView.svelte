@@ -19,16 +19,16 @@
         });
         term.loadAddon(addon);
         term.open(d);
-        addon.fit();
-        let shouldResizeEvent = val.term.onResizeNeeded(() => {
+        new ResizeObserver((ent)=>{
             addon.fit();
-        });
+        }).observe(d);
+        addon.fit();
+       
         term.onData((arg) => {
             val.term.write(arg);
         });
         return () => {
             term.dispose();
-            shouldResizeEvent.dispose();
         };
     });
 </script>

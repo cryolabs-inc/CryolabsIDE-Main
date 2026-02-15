@@ -61,7 +61,6 @@
         let elem = wholeDiv;
         if (elem) {
             elem.classList.add("dragging-over");
-            console.log("dragging over, ", e.currentTarget, wholeDiv);
 
         }
         e.stopImmediatePropagation();
@@ -156,7 +155,6 @@
         return () => {
             tdp.unregisterEntry(ftreeItem);
             if (disp) {
-                console.log("disposing.");
                 disp.dispose();
             }
         };

@@ -9,18 +9,18 @@ export class WM {
     minimizedWindowElement: HTMLElement;
     taskbarDragging: boolean = false;
     makeDraggable(draggableDiv: HTMLDivElement, handle: HTMLDivElement = draggableDiv, delay: number=0) {
-        handle.onmousedown = (e) => {
+        handle.onmousedown = (startEvent) => {
+            let domRect = draggableDiv.getBoundingClientRect();
+            let offsetX = startEvent.clientX - domRect.left;
+            let offsetY = startEvent.clientY - domRect.top;
             let id = setTimeout(() => {
                 function onMouseMove(e: MouseEvent) {
-                    let { movementX: dX, movementY: dY } = e;
-                    let domRect = draggableDiv.getBoundingClientRect();
-                    draggableDiv.style.left = `${domRect.left + dX}px`;
-                    draggableDiv.style.top = `${domRect.top + dY}px`;
+                    draggableDiv.style.left = `${e.clientX - offsetX}px`;
+                    draggableDiv.style.top = `${e.clientY - offsetY}px`;
                     e.preventDefault();
                 }
                 function onMouseUp(e: MouseEvent) {
                     document.body.style.userSelect = 'auto';
-
                     e.preventDefault();
                     window.removeEventListener('mousemove', onMouseMove);
                     window.removeEventListener('mouseup', onMouseUp);
@@ -74,7 +74,7 @@ export class WM {
                 "showAddressBar": false,
                 showTabs: false,
                 onLoaded(browser) {
-                    browser.tab_open({ link: url, target: "_blank" });
+                    browser.tab_open({ link: url, target: "_blank" }, true);
                 },
                 class: "bg-background",
                 async close() {
@@ -97,8 +97,8 @@ export class WM {
             context: contexts,
 
         });
-
-        px.getBrowser()?.tab_open({ link: url, target: "_blank" });
+        // console.log(px.getBrowser());
+        // px.getBrowser()?.tab_open({ link: url }, true);
 
         let initX = 0, initY = 0;
         if (openMode === "default") {
@@ -112,7 +112,11 @@ export class WM {
             initX = rest.position.X;
             initY = rest.position.Y;
         }
-        this.makeDraggable(draggableDiv, draggableDiv, 100);
+        draggableDiv.style.resize = "both";
+        draggableDiv.style.width = "300px";
+        draggableDiv.style.height = "300px";
+        draggableDiv.style.overflow = "hidden";
+        this.makeDraggable(draggableDiv, draggableDiv.querySelector('.toolbar-win') as HTMLDivElement, 100);
         draggableDiv.style.position = "absolute";
         draggableDiv.style.left = `${initX}px`;
         draggableDiv.style.top = `${initY}px`;

@@ -14,6 +14,7 @@
     import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
     import { getWM } from "../windows/WM";
     import { getEmulatorPort } from "$lib/emulator/emulator";
+    import StreamTerminalView from "$lib/base/resource/viewers/StreamTerminalView.svelte";
     let { onResize, basePath}: { onResize: TypedEvent<void>, basePath: string} = $props();
     const resourceManager = getResourceManager();
 
@@ -23,11 +24,26 @@
         async doRetrpanel(request: Request): Promise<ResourceResponse> {
             let url = new URL(request.url);
             let termName = path.basename(url.pathname);
+            if (termName === "pty") {
+                console.log("ja");
+                let cmdArgs = url.searchParams.getAll("args");
+                let cmdPath = url.searchParams.get('cmd');
+                
+                if (!cmdPath) {
+                    return ResourceResponse.notFound();
+                }
+                return ResourceResponse.ok<[typeof StreamTerminalView]>("panel", {
+                    component: StreamTerminalView,
+                    props: {
+                        args: cmdArgs,
+                        cmd: cmdPath
+                    }
+                });
+            }
             if (!papi.getTerminal(termName)) {
                 return ResourceResponse.notFound();
             }
-            if (termName === "hvc") {
-            }
+            
             return ResourceResponse.ok<[typeof TerminalView]>("panel", {
                 component: TerminalView,
                 props: {
@@ -77,6 +93,9 @@
         });
 
     papi.fsPromise.Resolve(fs);
+    papi.extPromise.Resolve(epapi);
+    
+    console.log(epapi);
         papi.openLink("term:///serial0", "tabs_lower");
         papi.emitAllLoaded();
 
