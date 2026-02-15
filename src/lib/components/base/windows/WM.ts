@@ -8,6 +8,60 @@ export class WM {
     rootElement: HTMLElement = document.body;
     minimizedWindowElement: HTMLElement;
     taskbarDragging: boolean = false;
+    makeResizable(draggableDiv: HTMLDivElement) {
+        const EDGE = 6;
+        type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | '';
+        function getEdge(e: MouseEvent): Edge {
+            let r = draggableDiv.getBoundingClientRect();
+            let x = e.clientX - r.left, y = e.clientY - r.top;
+            let n = y < EDGE, s = y > r.height - EDGE;
+            let w = x < EDGE, east = x > r.width - EDGE;
+            if (n && w) return 'nw'; if (n && east) return 'ne';
+            if (s && w) return 'sw'; if (s && east) return 'se';
+            if (n) return 'n'; if (s) return 's';
+            if (w) return 'w'; if (east) return 'e';
+            return '';
+        }
+        const cursorMap: Record<string, string> = {
+            n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+            ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
+        };
+        draggableDiv.addEventListener('mousemove', (e) => {
+            if ((e.target as HTMLElement) !== draggableDiv) {
+                draggableDiv.style.cursor = '';
+                return;
+            }
+            let edge = getEdge(e);
+            draggableDiv.style.cursor = cursorMap[edge] || '';
+        });
+        draggableDiv.addEventListener('mousedown', (e) => {
+            if ((e.target as HTMLElement) !== draggableDiv) return;
+            let edge = getEdge(e);
+            if (!edge) return;
+            e.preventDefault();
+            e.stopPropagation();
+            let startX = e.clientX, startY = e.clientY;
+            let rect = draggableDiv.getBoundingClientRect();
+            let startW = rect.width, startH = rect.height;
+            let startL = rect.left, startT = rect.top;
+            function onMouseMove(e: MouseEvent) {
+                let dx = e.clientX - startX, dy = e.clientY - startY;
+                if (edge.includes('e')) draggableDiv.style.width = `${startW + dx}px`;
+                if (edge.includes('w')) { draggableDiv.style.width = `${startW - dx}px`; draggableDiv.style.left = `${startL + dx}px`; }
+                if (edge.includes('s')) draggableDiv.style.height = `${startH + dy}px`;
+                if (edge.includes('n')) { draggableDiv.style.height = `${startH - dy}px`; draggableDiv.style.top = `${startT + dy}px`; }
+                e.preventDefault();
+            }
+            function onMouseUp() {
+                document.body.style.userSelect = 'auto';
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+            }
+            document.body.style.userSelect = 'none';
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+        });
+    }
     makeDraggable(draggableDiv: HTMLDivElement, handle: HTMLDivElement = draggableDiv, delay: number=0) {
         handle.onmousedown = (startEvent) => {
             let domRect = draggableDiv.getBoundingClientRect();
@@ -62,12 +116,32 @@ export class WM {
         let draggableDiv = document.createElement('div');
         contexts ??= this.contexts;
         let thiz = this;
+        let isMaximized = false;
+        let savedRect = { left: '', top: '', width: '', height: '' };
         function maximize() {
             draggableDiv.classList.add('maximizing');
             draggableDiv.addEventListener('animationend', (e) => {
                 draggableDiv.classList.remove('minimizing');
                 draggableDiv.classList.remove('maximizing');
             }, { once: true });
+        }
+        function toggleMaximize() {
+            if (!isMaximized) {
+                savedRect.left = draggableDiv.style.left;
+                savedRect.top = draggableDiv.style.top;
+                savedRect.width = draggableDiv.style.width;
+                savedRect.height = draggableDiv.style.height;
+                draggableDiv.style.left = '0px';
+                draggableDiv.style.top = '0px';
+                draggableDiv.style.width = '100vw';
+                draggableDiv.style.height = '100vh';
+            } else {
+                draggableDiv.style.left = savedRect.left;
+                draggableDiv.style.top = savedRect.top;
+                draggableDiv.style.width = savedRect.width;
+                draggableDiv.style.height = savedRect.height;
+            }
+            isMaximized = !isMaximized;
         }
         let px = mount(Window, {
             props: {
@@ -91,7 +165,8 @@ export class WM {
                         maximize();
                         thiz.minimizedWindowElement.removeChild(px);
                     }
-                }
+                },
+                maximize: toggleMaximize
             },
             target: draggableDiv,
             context: contexts,
@@ -112,15 +187,25 @@ export class WM {
             initX = rest.position.X;
             initY = rest.position.Y;
         }
-        draggableDiv.style.resize = "both";
         draggableDiv.style.width = "300px";
         draggableDiv.style.height = "300px";
         draggableDiv.style.overflow = "hidden";
+        this.makeResizable(draggableDiv);
         this.makeDraggable(draggableDiv, draggableDiv.querySelector('.toolbar-win') as HTMLDivElement, 100);
         draggableDiv.style.position = "absolute";
         draggableDiv.style.left = `${initX}px`;
         draggableDiv.style.top = `${initY}px`;
-        draggableDiv.style.border = "2px solid var(--accent)"
+        draggableDiv.style.border = "2px solid var(--accent)";
+        draggableDiv.tabIndex = -1;
+        draggableDiv.style.boxShadow = "none";
+        draggableDiv.addEventListener('focusin', () => {
+            draggableDiv.style.boxShadow = "0 12px 40px rgba(0, 0, 0, 0.55)";
+        });
+        draggableDiv.addEventListener('focusout', (e) => {
+            if (!draggableDiv.contains(e.relatedTarget as Node)) {
+                draggableDiv.style.boxShadow = "none";
+            }
+        });
         this.rootElement.appendChild(draggableDiv);
 
     }

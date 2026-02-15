@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <vector>
 #include <pty.h>
+#include <sys/ioctl.h>
 typedef struct {
   void *conn_state;
   int32_t self_fid;
@@ -183,6 +184,7 @@ int reg_listener(int fd, PFNEPOLLCALLBACK listener, void *user_data,
 #define MSG_PIPECLOSED 5
 #define MSG_STARTPROCESS_PTY 6
 #define MSG_STARTPROCESS_PTY_RESPONSE 7
+#define MSG_RESIZEPTY 8
 
 typedef struct {
   int read_cursor;
@@ -624,7 +626,10 @@ int handle_start_proc_pty(ConnectionState *conn_state, int message_id,
   int chld = forkpty(&pty_fd, NULL, NULL, NULL);
   if (chld == 0) {
     // in children of pty.
-    setsid();
+    // Don't call setsid() here — forkpty() already created a new session
+    // and set the slave PTY as the controlling terminal. Calling setsid()
+    // again would detach the controlling terminal, preventing SIGWINCH
+    // delivery on resize.
     execvp(process_name.c_str(), (char*const*)argv_ptrs.data());
     perror("execlp");
     _exit(1);
@@ -639,6 +644,35 @@ int handle_start_proc_pty(ConnectionState *conn_state, int message_id,
   conn_state->send_data_bytes(conn_state, message_id, MSG_STARTPROCESS_PTY_RESPONSE);
 return 0;
 }
+int handle_resize_pty(ConnectionState *conn_state, int message_id,
+                      uint8_t *msg, size_t message_len) {
+  BufferContext *buf = NULL;
+  new_buffer_context(&buf, msg, message_len);
+  uint32_t fid = 0;
+  CHECK_OP(read_u32_be(buf, &fid));
+  uint16_t cols = 0, rows = 0;
+  CHECK_OP(read_u16_be(buf, &cols));
+  CHECK_OP(read_u16_be(buf, &rows));
+  free_buffer_context(buf);
+
+  auto it = conn_state->fid_to_fd->find(fid);
+  if (it == conn_state->fid_to_fd->end()) {
+    return MSG_ERROR;
+  }
+  FDState *fds = it->second;
+  if (!fds->is_pty) {
+    return MSG_ERROR;
+  }
+  struct winsize ws = {};
+  ws.ws_col = cols;
+  ws.ws_row = rows;
+  if (ioctl(fds->self_fd, TIOCSWINSZ, &ws) < 0) {
+    perror("ioctl(TIOCSWINSZ)");
+    return MSG_ERROR;
+  }
+  return 0;
+}
+
 int close_pipe(ConnectionState* conn_state, int message_id, uint8_t* msg, size_t message_len) {
   BufferContext* buf = NULL;
   CHECK_OP(new_buffer_context(&buf, msg, message_len));
@@ -728,6 +762,9 @@ int read_full_message(ConnectionState *conn_state, uint8_t **response_bytes,
     break;
   case MSG_PIPECLOSED:
     handler = close_pipe;
+    break;
+  case MSG_RESIZEPTY:
+    handler = handle_resize_pty;
     break;
   }
 

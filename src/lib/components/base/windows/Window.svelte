@@ -2,13 +2,14 @@
     import { getAllContexts, onMount, type ComponentProps, type Snippet } from "svelte";
     import Browser from "../panel/Browser.svelte";
     import { scale } from "svelte/transition";
-    import { Minimize2Icon, MinimizeIcon, MinusIcon, XIcon } from "@lucide/svelte";
+    import { MaximizeIcon, Minimize2Icon, MinimizeIcon, MinusIcon, XIcon } from "@lucide/svelte";
     import { cn } from "$lib/utils";
     interface WProps extends ComponentProps<typeof Browser> {
         onLoaded: (browser: Browser)=>void;
         class: string;
         close: ()=>void;
         minimize: ()=>void;
+        maximize: ()=>void;
     }
      let px: WProps = $props();
     let b = $state<Browser>();
@@ -34,6 +35,9 @@
         <button class="hover:text-red-400" onclick={e=>{
             px.minimize();
         }}><MinusIcon></MinusIcon></button>
+        <button class="hover:text-red-400" onclick={e=>{
+            px.maximize();
+        }}><MaximizeIcon></MaximizeIcon></button>
         <div class="justify-self-center pl-4 select-none">asdf</div>
     </div>
     <div class="w-full flex-1 min-h-0 overflow-hidden">
