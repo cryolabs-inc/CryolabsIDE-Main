@@ -30,3 +30,4 @@ vite.config.ts.timestamp-*
 /disk
 /static/manual_config.yaml
 /base_client_image/mu-cxx/build
+/home
