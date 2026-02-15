@@ -1,11 +1,15 @@
 <script lang="ts">
+    import { CompletionTriggerKind } from "typescript";
     import Link from "../../resource/Link.svelte";
     import { getWM } from "../../windows/WM";
+    import { usePageAPI } from "../apis/PageAPI";
+    import * as comlink from 'comlink';
     let wm = getWM();
     
     let cmdSearchParams = new URLSearchParams();
     cmdSearchParams.append("cmd", "/bin/sh");
     cmdSearchParams.append("args", "-i");
+    let papi = usePageAPI();
 </script>
 <div class="h-full">
 <div class="text-xl">Welcome to CryolabsIDE!</div>
@@ -28,4 +32,11 @@
     <Link href={"term:///pty?"+cmdSearchParams.toString()} target="tabs_lower" isPopup={true}> 
         open /bin/bash in new window.
     </Link>
+    <button onclick={e=>{
+        papi.ext.then(v=>{
+            v.update(comlink.proxy(()=>{}));
+        })
+    }}>
+        Update dis
+    </button>
 </div>

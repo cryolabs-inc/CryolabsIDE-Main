@@ -311,7 +311,7 @@ async function workerCode(getSrvRoot: () => string) {
     let disk_storage = await localforage.getItem("disk_downloaded") as ArrayBuffer | undefined;
     if (!disk_storage) {
 
-
+        console.log("Downloading disk image");
         try {
             let r = await fetch(getSrvRoot() + 'disk');
             if (!r.ok) {

@@ -26,8 +26,8 @@
     }
 </script>
 
-<div class={cn(px.class, `relative resize`)} in:scale out:scale={{duration: 100}}>
-    <div class="w-full flex flex-row toolbar-win">
+<div class={cn(px.class, `relative w-full h-full flex flex-col`)} in:scale out:scale={{duration: 100}}>
+    <div class="w-full h-[20pt] flex flex-row toolbar-win">
         <button class="hover:text-red-400" onclick={e=>{
             px.close();
         }} ><XIcon></XIcon></button>
@@ -36,5 +36,7 @@
         }}><MinusIcon></MinusIcon></button>
         <div class="justify-self-center pl-4 select-none">asdf</div>
     </div>
-    <Browser bind:this={b} {...px}></Browser>
+    <div class="w-full flex-1 min-h-0 overflow-hidden">
+<Browser bind:this={b} {...px}></Browser>
+    </div>
 </div>
