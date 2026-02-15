@@ -29,3 +29,4 @@ vite.config.ts.timestamp-*
 /static/initramfs-virt
 /disk
 /static/manual_config.yaml
+/mu-cxx/build
