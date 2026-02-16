@@ -1,6 +1,8 @@
 echo Setting up 
 cp /mnt/custom_init /etc/init.d/custom_init
 g++ /mnt/mu-cxx/main.cc -m32 -static -o /usr/bin/mu
+cp /mnt/bumper.sh /usr/bin/bumper
+chmod +x /usr/bin/bumper
 chmod +x /etc/init.d/custom_init
 chsh -s /bin/bash root
 rc-update add custom_init default
