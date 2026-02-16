@@ -36,7 +36,7 @@ export interface ExtensionAPI {
 	/**
 	 * Open a pty to a shell. Helps users run isolated shells.
 	 */
-	openPtyToShell(cmd: string, args: string[]): Promise<{kill(): Promise<number>, wait(): Promise<number>, streams: ()=>Promise<{readable: ReadableStream, writable: WritableStream}>}>
+	openPtyToShell(cmd: string, args: string[]): Promise<{kill(): Promise<number>, wait(): Promise<number>, resize(cols: number, rows: number): Promise<void>, streams: ()=>Promise<{readable: ReadableStream, writable: WritableStream}>}>
 }
 interface FSDirent {
     name: string;

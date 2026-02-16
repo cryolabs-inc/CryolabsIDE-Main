@@ -8,7 +8,12 @@ depend() {
 start() {
     ip link set eth0 up
     ip link set lo up
+    mkdir /dev/pts
+    mount -t devpts /dev/pts /dev/pts
     mount -t 9p -o cache=none,directio host9p /root
+    (cd /root && HOME=/root mu ) &
+    sleep 0.03
+    echo h > /dev/hvc1
     udhcpc
     sleep 0.75
     eend 0

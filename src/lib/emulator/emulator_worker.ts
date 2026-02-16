@@ -275,12 +275,15 @@ class WorkerHandler implements WorkerHandlerAPI {
                 
                 let ts = new TransformStream<Uint8Array,Uint8Array>();
                 return comlink.proxy({
-                    
+
                     kill: async ()=>{
                         return proc.kill();
                     },
                     wait: async()=>{
                         return proc.wait();
+                    },
+                    resize: async (cols: number, rows: number)=>{
+                        return proc.resize(cols, rows);
                     },
                     streams: async()=>{
                         return comlink.transfer({
@@ -311,7 +314,7 @@ async function workerCode(getSrvRoot: () => string) {
     let disk_storage = await localforage.getItem("disk_downloaded") as ArrayBuffer | undefined;
     if (!disk_storage) {
 
-
+        console.log("Downloading disk image");
         try {
             let r = await fetch(getSrvRoot() + 'disk');
             if (!r.ok) {

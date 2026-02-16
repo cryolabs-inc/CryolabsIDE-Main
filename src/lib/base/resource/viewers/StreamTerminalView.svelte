@@ -7,7 +7,7 @@
     let {
         cmd,
         args,
-        onUnload
+        onUnload,
     }: {
         cmd: string;
         args: string[];
@@ -23,31 +23,29 @@
         let addon = new FitAddon();
         term.loadAddon(addon);
         term.open(d);
-        new ResizeObserver((ent) => {
-            addon.fit();
-        }).observe(d);
+
         addon.fit();
         (async () => {
             let api = await p.ext;
 
             let psd = await api.openPtyToShell(cmd, args);
-            let {readable, writable} =await psd.streams(); // only allowed once
+            let { readable, writable } = await psd.streams(); // only allowed once
             if (onUnload)
-                onUnload(()=>{
+                onUnload(() => {
                     psd.kill();
                 });
-            let rdr = readable
-                .pipeThrough<string>(
-                    new TextDecoderStream() as ReadableWritablePair<
-                        string,
-                        Uint8Array
-                    >,
-                )
-                .getReader();
+            addon.fit();
+            await psd.resize(term.cols, term.rows);
+            new ResizeObserver((ent) => {
+                addon.fit();
+                psd.resize(term.cols, term.rows);
+            }).observe(d);
+            
+
             let ts = new TextEncoderStream();
             ts.readable.pipeTo(writable);
             let wrtr = ts.writable.getWriter();
-
+            let rdr = readable.getReader();
             if (!d) {
                 return;
             }

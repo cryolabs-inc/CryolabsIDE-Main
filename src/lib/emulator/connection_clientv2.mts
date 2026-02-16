@@ -170,7 +170,8 @@ const ConnectionMethods = {
     KillProcessResponse: 4,
     PipeClosed: 5,
     StartProcessPty: 6,
-    StartProcessPtyResponse: 7
+    StartProcessPtyResponse: 7,
+    ResizePty: 8
 }
 type DuplexStreamPair = {
     readable: ReadableStream<Uint8Array>,
@@ -392,6 +393,10 @@ export class ConnectionClient {
         return {
             pty_stream_reader: readable,
             pty_stream_writer: writable,
+            resize: async (cols: number, rows: number) => {
+                let [payload] = Marshall(["u32", "u16", "u16"], [ptyFid, cols, rows]);
+                this._send_msg(ConnectionMethods.ResizePty, payload, 0);
+            },
             wait: async () => {
                 return new Promise<number>((resolve) => {
                     if (this.pid_exitcodes.has(procFid)) {
