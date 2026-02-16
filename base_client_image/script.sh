@@ -1,6 +1,8 @@
 echo Setting up 
 cp /mnt/custom_init /etc/init.d/custom_init
 g++ /mnt/mu-cxx/main.cc -m32 -static -o /usr/bin/mu
+cp /mnt/spawn-in.sh /usr/bin/spawn-in
+chmod +x /usr/bin/spawn-in
 chmod +x /etc/init.d/custom_init
 chsh -s /bin/bash root
 rc-update add custom_init default
