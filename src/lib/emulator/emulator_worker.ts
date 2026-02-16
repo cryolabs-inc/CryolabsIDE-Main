@@ -336,7 +336,7 @@ async function workerCode(getSrvRoot: () => string) {
 
         console.log("Downloading disk image");
         try {
-            let r = await fetch(getSrvRoot() + 'disk.sqfs');
+            let r = await fetch(getSrvRoot() + 'disk');
             if (!r.ok) {
                 throw new Error("Failed to download disk image.");
             }
@@ -415,9 +415,9 @@ async function workerCode(getSrvRoot: () => string) {
         },
         // },
         hda,
-        cmdline: `console=ttyS0 root=/dev/sda rootfstype=squashfs init=/sbin/init`,
+        cmdline: `console=ttyS0 root=/dev/sda rootfstype=ext4 init=/sbin/init`,
         wasm_path: `${getSrvRoot()}v86.wasm`,
-        memory_size: 1024 * 1024 * 1024 * 2,
+        memory_size: 1024 * 1024 * 512,
         disable_keyboard: true,
         disable_mouse: true,
         virtio_console: true,

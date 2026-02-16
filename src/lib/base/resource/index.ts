@@ -296,7 +296,7 @@ export class FileHandler extends SimpleResourceHandler {
                             lsp_config: {
                                 lang_id: "cpp",
                                 lang_command: "/usr/bin/clangd",
-                                lang_args: ["--query-driver=/usr/bin/*"],
+                                lang_args: ["--query-driver=/usr/bin/*", "-j=2"],
                                 additional_extensions:[]
                             }
                         }
