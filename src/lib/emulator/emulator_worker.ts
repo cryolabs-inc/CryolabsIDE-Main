@@ -272,8 +272,7 @@ class WorkerHandler implements WorkerHandlerAPI {
                 let conn = await connection.promise;
 
                 let proc = await conn.start_process_pty(cmd, args);
-                
-                let ts = new TransformStream<Uint8Array,Uint8Array>();
+
                 return comlink.proxy({
 
                     kill: async ()=>{
@@ -290,6 +289,27 @@ class WorkerHandler implements WorkerHandlerAPI {
                             writable: proc.pty_stream_writer,
                     readable: proc.pty_stream_reader,
                         }, [proc.pty_stream_reader, proc.pty_stream_writer]);
+                    }
+                });
+            },
+            async openProcess(cmd: string, args: string[]) {
+                let conn = await connection.promise;
+
+                let proc = await conn.start_process(cmd, args);
+
+                return comlink.proxy({
+                    kill: async () => {
+                        return proc.kill();
+                    },
+                    wait: async () => {
+                        return proc.wait();
+                    },
+                    streams: async () => {
+                        return comlink.transfer({
+                            stdin: proc.stdin_stream,
+                            stdout: proc.stdout_stream,
+                            stderr: proc.stderr_stream,
+                        }, [proc.stdin_stream, proc.stdout_stream, proc.stderr_stream]);
                     }
                 });
             }
@@ -316,7 +336,7 @@ async function workerCode(getSrvRoot: () => string) {
 
         console.log("Downloading disk image");
         try {
-            let r = await fetch(getSrvRoot() + 'disk');
+            let r = await fetch(getSrvRoot() + 'disk.sqfs');
             if (!r.ok) {
                 throw new Error("Failed to download disk image.");
             }
@@ -395,7 +415,7 @@ async function workerCode(getSrvRoot: () => string) {
         },
         // },
         hda,
-        cmdline: `console=ttyS0 root=/dev/sda init=/sbin/init rw`,
+        cmdline: `console=ttyS0 root=/dev/sda rootfstype=squashfs init=/sbin/init`,
         wasm_path: `${getSrvRoot()}v86.wasm`,
         memory_size: 1024 * 1024 * 1024 * 2,
         disable_keyboard: true,
@@ -424,7 +444,9 @@ async function workerCode(getSrvRoot: () => string) {
     // Object.defineProperty(self, 'msgLoop', {value: new MessageLoop(), configurable: true, writable: true});
     initinstance.add_listener("emulator-ready", () => {
         vm_instance.Resolve(initinstance);
-        initinstance.add_listener(getReadFrom(1), function _ref() {
+        let readyBuf = new Uint8Array();
+        initinstance.add_listener(getReadFrom(1), function _ref(dat: Uint8Array) {
+            console.log("primed");
             let rs = new ReadableStream<Uint8Array>({
                 start(controller) {
                     initinstance.add_listener(getReadFrom(0), (dat: Uint8Array) => {

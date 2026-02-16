@@ -58,10 +58,33 @@
         let terminalEmitter = new Emitter<string>();
         let api = comlink.wrap(await getEmulatorPort(basePath)) as WorkerHandlerAPI;
         let serialPort = new MessageChannel();
+        let downloadNotif: ReturnType<typeof papi.statusBar.addNotification> | undefined;
         serialPort.port1.onmessage = (e) => {
-            let evt = e as MessageEvent<{ type: string; data: string }>;
+            let evt = e as MessageEvent<{ type: string; data: string; total?: number; loaded?: number }>;
             if (evt.data.type === "terminalData") {
                 terminalEmitter.emit(evt.data.data);
+            } else if (evt.data.type === "progress") {
+                let total = evt.data.total ?? 0;
+                let loaded = evt.data.loaded ?? 0;
+                let pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+                if (!downloadNotif) {
+                    downloadNotif = papi.statusBar.addNotification({
+                        title: "Downloading disk image",
+                        label: `${pct}% downloaded`,
+                        progress: { progressEmitter: new Emitter() }
+                    });
+                }
+                for (let n of papi.statusBar.notifications) {
+                    if (n.title === "Downloading disk image") {
+                        n.label = `${pct}% (${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB)`;
+                    }
+                }
+                papi.statusBar.onNotificationListChangedEmitter.emit();
+            } else if (evt.data.type === "downloadDone") {
+                if (downloadNotif) {
+                    downloadNotif.dispose();
+                    downloadNotif = undefined;
+                }
             }
         };
 

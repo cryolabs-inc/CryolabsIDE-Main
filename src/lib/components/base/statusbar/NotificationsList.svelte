@@ -43,7 +43,7 @@
                             <div class="text-gray-400 text-sm">{notif.label}</div>
                             {#if notif.progress}
                                 <div class="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
-                                    <div class="h-full bg-blue-500 rounded-full animate-pulse"></div>
+                                    <div class="h-full bg-blue-500 rounded-full transition-all duration-300" style="width: {notif.progress.percent ?? 0}%"></div>
                                 </div>
                             {/if}
                         </div>

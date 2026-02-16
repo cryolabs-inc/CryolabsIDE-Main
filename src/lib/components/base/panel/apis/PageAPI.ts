@@ -19,7 +19,8 @@ export interface Notification {
     title: string;
     label: string;
     progress?: {
-        progressEmitter: Emitter<void>
+        progressEmitter: Emitter<void>,
+        percent?: number
     }
 };
 export interface NotificationWithID extends Notification {

@@ -37,6 +37,10 @@ export interface ExtensionAPI {
 	 * Open a pty to a shell. Helps users run isolated shells.
 	 */
 	openPtyToShell(cmd: string, args: string[]): Promise<{kill(): Promise<number>, wait(): Promise<number>, resize(cols: number, rows: number): Promise<void>, streams: ()=>Promise<{readable: ReadableStream, writable: WritableStream}>}>
+	/**
+	 * Launch a process with separate stdin, stdout, and stderr streams (no PTY).
+	 */
+	openProcess(cmd: string, args: string[]): Promise<{kill(): Promise<number>, wait(): Promise<number>, streams: ()=>Promise<{stdin: WritableStream, stdout: ReadableStream, stderr: ReadableStream}>}>
 }
 interface FSDirent {
     name: string;

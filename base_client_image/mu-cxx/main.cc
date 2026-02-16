@@ -1062,6 +1062,13 @@ int main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
 
   printf("Server started on localhost:8088\n");
+  #ifdef IS_HVC 
+  int readyfd = open("/dev/hvc1",O_RDWR);
+  const char* ready = "READY\n";
+  write(readyfd, ready, strlen(ready));
+  close(readyfd);
+
+  #endif
   while (true) {
     int num_events = epoll_wait(epoll_fd, poll_evts, EPOLL_NUM_EVENTS, -1);
     if (num_events < 0) {

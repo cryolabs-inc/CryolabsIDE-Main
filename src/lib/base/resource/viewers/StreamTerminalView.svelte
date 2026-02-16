@@ -60,6 +60,7 @@
             })();
 
             term.onData((arg) => {
+                console.log(arg);
                 wrtr.write(arg);
             });
         })();
