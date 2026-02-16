@@ -17,8 +17,9 @@ else
     docker run -d --rm --name tempRE ctf/tmp-emulator-image sleep infinity
 fi
 docker export tempRE -o disk.tar
-truncate -s 512M disk
+truncate -s 1G disk
 mkdir ext_out
+
 tar -xf  disk.tar -C ext_out
 
 [[ -f ./ext_out/boot/vmlinuz-virt ]] && cp ./ext_out/boot/vmlinuz-virt . 
@@ -26,6 +27,8 @@ tar -xf  disk.tar -C ext_out
 [[ -d ./ext_out/boot ]] && tar -C ext_out/boot -cf boot.tar ext_out/boot  .
 exec 1>&3
 mkfs.ext4 disk -d ext_out -FF
+rm disk.sqfs
+mksquashfs ext_out disk.sqfs
 rm -rf ext_out 
 docker stop -t0 tempRE
 docker rm tempRE || :
