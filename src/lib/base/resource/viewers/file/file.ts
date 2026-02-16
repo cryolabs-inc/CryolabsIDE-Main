@@ -56,6 +56,21 @@ export class FileEntry extends TreeItem {
 
             this.actions = [
                 {
+                    async callback(treeDataProvider, treeItem, hbe) {
+                        let ft = treeDataProvider as FT;
+                        let f = await papi.fs;
+                        let nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
+                        await f.createFile(nwPath);
+
+                        setTimeout(()=>{
+                            ft.rename(nwPath);
+                        },100);
+                    },
+                    label: "Create new file",
+                    id: "create-file",
+                    icon: FilePlusIcon
+                },
+                {
                     async callback(t) {
 
                         let ft = t as FT;
@@ -69,21 +84,6 @@ export class FileEntry extends TreeItem {
                     label: "Create new directory",
                     id: "create-directory",
                     icon: FolderPlusIcon
-                },
-                {
-                    async callback(treeDataProvider, treeItem, hbe) {
-                        let ft = treeDataProvider as FT;
-                        let f = await papi.fs;
-                        let nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
-                        await f.createFile(nwPath);
-                        
-                        setTimeout(()=>{
-                            ft.rename(nwPath);  
-                        },100);
-                    },
-                    label: "Create new file",
-                    id: "create-file",
-                    icon: FilePlusIcon
                 }
             ];
 

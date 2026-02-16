@@ -152,20 +152,84 @@ export class SrcControlGit {
         });
 
     }
-    async pull(path: string, branch: string = "main", commitSha?: string) {
+    async pull(path: string, branch: string = "main", commitSha?: string, confirm?: (title: string, message: string) => Promise<boolean>) {
+        if (confirm) {
+            let ok = await confirm("Pull from remote?", "Any unpushed local changes will be lost. Do you want to continue?");
+            if (!ok) return;
+        }
+
         let gctx = this.getGitCtx(path);
-        let { kit, reponame: repo, username: owner} = gctx;
+        let { kit, reponame: repo, username: owner } = gctx;
         let r = await kit.rest.git.getRef({
             repo,
             owner,
-            ref: "heads/"+branch
+            ref: "heads/" + branch
         });
+        let sha = commitSha ?? r.data.object.sha;
         let commit = await kit.rest.git.getCommit({
-            commit_sha: r.data.object.sha,
+            commit_sha: sha,
             repo,
             owner
         });
         let ctree = commit.data.tree.sha;
+        let t = await kit.rest.git.getTree({
+            owner,
+            repo,
+            tree_sha: ctree,
+            recursive: "true"
+        });
+
+        // Delete existing contents to prevent stale files
+        let existing = await this.fs.readdir(path);
+        for (let entry of existing) {
+            let fullPath = p.resolve(path, entry);
+            try {
+                await this.fs.removeDirectory(fullPath, { recursive: true });
+            } catch {
+                try {
+                    await this.fs.removeEntry(fullPath);
+                } catch { }
+            }
+        }
+
+        // Create directories first
+        for (let it of t.data.tree) {
+            if (it.type === "tree" && it.path) {
+                let fullPath = p.resolve(path, it.path);
+                try {
+                    await this.fs.mkdir(fullPath, { recursive: true });
+                } catch { }
+            }
+        }
+
+        // Then write blobs
+        for (let it of t.data.tree) {
+            if (it.type === "blob" && it.path && it.sha) {
+                let fullPath = p.resolve(path, it.path);
+                // Ensure parent directory exists
+                let parentDir = p.dirname(fullPath);
+                try {
+                    await this.fs.mkdir(parentDir, { recursive: true });
+                } catch { }
+
+                let blob = await kit.rest.git.getBlob({
+                    owner,
+                    repo,
+                    file_sha: it.sha
+                });
+                let content: Uint8Array;
+                if (blob.data.encoding === "base64") {
+                    let binary = atob(blob.data.content);
+                    content = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {
+                        content[i] = binary.charCodeAt(i);
+                    }
+                } else {
+                    content = new TextEncoder().encode(blob.data.content);
+                }
+                await this.fs.writeFile(fullPath, content.buffer as ArrayBuffer, content.byteLength, 0);
+            }
+        }
     }
 
     /**
