@@ -69,9 +69,10 @@
             );
             let ab = await value.arrayBuffer();
             let u8 = new Uint8Array(ab);
-
-            let model = edit.getModel();
-            
+                let vur = monaco.Uri.parse("file:///root"+filePath);
+                
+            let model = monaco.editor.getModel(vur) ?? monaco.editor.createModel(dec.decode(u8), "c", vur);
+            edit.setModel(model);
             if (model) {
             model.setEOL(monaco.editor.EndOfLineSequence.LF);
                 

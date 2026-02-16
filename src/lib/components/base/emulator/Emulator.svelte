@@ -15,6 +15,7 @@
     import { getWM } from "../windows/WM";
     import { getEmulatorPort } from "$lib/emulator/emulator";
     import StreamTerminalView from "$lib/base/resource/viewers/StreamTerminalView.svelte";
+    import { add_langs } from "$lib/base/monaco";
     let { onResize, basePath}: { onResize: TypedEvent<void>, basePath: string} = $props();
     const resourceManager = getResourceManager();
 
@@ -117,8 +118,7 @@
 
     papi.fsPromise.Resolve(fs);
     papi.extPromise.Resolve(epapi);
-    
-    console.log(epapi);
+    add_langs(papi);
     let usp = new URLSearchParams();
     let fpath = "/root" + papi.rootPath;
     usp.append("cmd", "/usr/bin/spawn-in");

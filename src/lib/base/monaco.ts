@@ -90,6 +90,9 @@ export class CryolabsIDETransport extends BaseMessageTransport {
 }
 export async function add_langs(pageAPI: PageAPI) {
     let extend = await pageAPI.ext;
-    // await extend.openProcess("/bin/bash", [""]);
-    // new monaco.lsp.MonacoLspClient(new CryolabsIDETransport())
+    let clangd = await extend.openProcess("/usr/bin/clangd", ["--background-index"]);
+    let streams = await clangd.streams();
+    let transport = new CryolabsIDETransport(streams.stdout, streams.stdin);
+    let cli = new monaco.lsp.MonacoLspClient(transport);
+    
 }

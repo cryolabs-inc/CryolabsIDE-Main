@@ -10,6 +10,8 @@ import FileTreeViewer from "./viewers/file/FileTreeViewer.svelte";
 import HtmlViewer from "./viewers/HtmlViewer.svelte";
 import { O_TRUNC } from "@zenfs/core/constants.js";
 import Git from "./viewers/git/Git.svelte";
+import CodemirrorEditor from "./viewers/CodemirrorEditor.svelte";
+import * as langCpp from '@codemirror/lang-cpp';
 // --- Resource Types ---
 
 
@@ -277,11 +279,12 @@ export class FileHandler extends SimpleResourceHandler {
         const getRequest = await this.doGet(request);
         let fsP = this.fsAPI;
         if ((getRequest.status >= 200 && getRequest.status < 300) && getRequest.resource && getRequest.resource.type === "data" && getRequest.resource.data.data)
-            return new ResourceResponse<[typeof MonacoEditor]>(getRequest.status, getRequest.statusMessage, {
+            
+            return new ResourceResponse<[typeof CodemirrorEditor]>(getRequest.status, getRequest.statusMessage, {
                 resource: {
                     "type": "panel",
                     data: {
-                        component: MonacoEditor,
+                        component: CodemirrorEditor,
                         props: {
                             value: getRequest.resource.data.data,
                             onChangeContent: async (newC) => {
@@ -289,7 +292,13 @@ export class FileHandler extends SimpleResourceHandler {
                                 await fsP.truncate(this.getPathnameFromRequest(request), newC.byteLength);
 
                             },
-                            filePath: this.getPathnameFromRequest(request)
+                            filePath: this.getPathnameFromRequest(request),
+                            lsp_config: {
+                                lang_id: "cpp",
+                                lang_command: "/usr/bin/clangd",
+                                lang_args: ["--query-driver=/usr/bin/*"],
+                                additional_extensions:[]
+                            }
                         }
                     }
                 }
