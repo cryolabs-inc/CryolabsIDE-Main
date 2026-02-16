@@ -48,7 +48,7 @@
             language: value.type,
             automaticLayout: true,
             theme: "vs-dark",
-            
+
         });
         
         let watcher: Disposable | undefined = undefined;
@@ -71,10 +71,13 @@
             let u8 = new Uint8Array(ab);
 
             let model = edit.getModel();
-
+            
             if (model) {
+            model.setEOL(monaco.editor.EndOfLineSequence.LF);
+                
                 model.onDidChangeContent((e) => {
                     if (!e.isFlush) {
+                        model.setEOL(monaco.editor.EndOfLineSequence.LF);
                         let val = model.getValue();
                         onChangeContent(enc.encode(val));
                     }

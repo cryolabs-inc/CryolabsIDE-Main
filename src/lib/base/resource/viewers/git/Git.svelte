@@ -75,7 +75,27 @@
     {#if !srcCtrlGit}
         <p>Loading content...</p>
     {:else if ghLink}
-        <p>Linked to: {ghLink.owner}/{ghLink.repo}</p>
+        <p>Linked to: {ghLink.owner}/{ghLink.repo} <a
+            href="javascript:void(0);"
+            onclick={async () => {
+                const repoFullName =
+                    await pageApi.dialogManager!.showPrompt({
+                        title: "Change Repository",
+                        message: "Search for a GitHub repository to link",
+                        placeholder: "owner/repo or search...",
+                        defaultValue: `${ghLink!.owner}/${ghLink!.repo}`,
+                        autocomplete: srcCtrlGit!.getRepoAutocomplete(),
+                    });
+
+                if (repoFullName) {
+                    const [owner, repo] = repoFullName.split("/");
+                    if (owner && repo) {
+                        ghLink = { owner, repo };
+                        srcCtrlGit!.setOwner(owner);
+                        srcCtrlGit!.setRepo(repo);
+                    }
+                }
+            }}>(edit)</a></p>
 
         <button
             class="border-2 border-white rounded bg-accent text-foreground"
@@ -84,6 +104,14 @@
                     srcCtrlGit.push(pageApi.rootPath, "main", "tst");
                 }
             }}>Push</button
+        >
+        <button
+            class="border-2 border-white rounded bg-accent text-foreground"
+            onclick={(e) => {
+                if (srcCtrlGit) {
+                    srcCtrlGit.pull(pageApi.rootPath, ghLink?.branch ?? "main", undefined, (title, message) => pageApi.dialogManager!.confirm(title, message));
+                }
+            }}>Pull</button
         >
     {:else}
         <p>

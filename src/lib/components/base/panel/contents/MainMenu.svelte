@@ -5,11 +5,14 @@
     import { usePageAPI } from "../apis/PageAPI";
     import * as comlink from 'comlink';
     let wm = getWM();
+    let papi = usePageAPI();
     
     let cmdSearchParams = new URLSearchParams();
-    cmdSearchParams.append("cmd", "/bin/bash");
+    cmdSearchParams.append("cmd", "/usr/bin/spawn-in");
+    cmdSearchParams.append("args", "/root" + papi.rootPath);
+    cmdSearchParams.append("args", "/bin/bash");
     cmdSearchParams.append("args", "-i");
-    let papi = usePageAPI();
+    
 </script>
 <div class="h-full">
 <div class="text-xl">Welcome to CryolabsIDE!</div>

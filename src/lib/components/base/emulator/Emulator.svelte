@@ -96,7 +96,13 @@
     papi.extPromise.Resolve(epapi);
     
     console.log(epapi);
-        papi.openLink("term:///serial0", "tabs_lower");
+    let usp = new URLSearchParams();
+    let fpath = "/root" + papi.rootPath;
+    usp.append("cmd", "/usr/bin/spawn-in");
+    usp.append("args", fpath);
+    usp.append("args", "/bin/bash");
+    usp.append("args", "-i");
+        papi.openLink("term:///pty?"+usp.toString(), "tabs_lower");
         papi.emitAllLoaded();
 
     });
