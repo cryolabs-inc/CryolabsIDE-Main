@@ -11,6 +11,7 @@ start() {
     mkdir /dev/pts
     mount -t devpts /dev/pts /dev/pts
     mount -t 9p -o cache=none,directio host9p /root
+    mount -t tmpfs /tmp /tmp
     (cd /root && HOME=/root mu ) &
     udhcpc
     sleep 0.75
