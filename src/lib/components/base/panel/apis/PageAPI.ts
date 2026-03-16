@@ -18,9 +18,9 @@ interface PTerminal {
     write(data: string): void;
 }
 export interface Notification {
-
     title: string;
     label: string;
+    kind?: "info" | "error";
     progress?: {
         progressEmitter: Emitter<void>,
         percent?: number
@@ -222,8 +222,11 @@ export class PageAPI {
         });
     }
     #onAllLoadedEmitter = new Emitter<void>();
+    #loadedTriggered = false;
     emitAllLoaded() {
+        if (this.#loadedTriggered) return;
         this.#onAllLoadedEmitter.emit();
+        this.#loadedTriggered = true;
     }
     onAllLoaded = this.#onAllLoadedEmitter.event;
     #terminals: ({ id: string, term: PTerminal })[] = [];

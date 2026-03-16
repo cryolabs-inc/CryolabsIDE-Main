@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-    import { BookIcon, CircleQuestionMarkIcon, FileIcon, GitBranchIcon } from "@lucide/svelte";
+    import { BookIcon, CircleQuestionMarkIcon, FileIcon, GitBranchIcon, Settings2Icon } from "@lucide/svelte";
 
     import { getAllContexts, onMount } from "svelte";
     import type { SidePanelItem } from "$lib/components/base/panel/SidePanelItem";
@@ -22,6 +22,7 @@
     } from "$lib/base/resourceCtx";
     import { Emitter } from "$lib/base/events";
     import FilePanel from "../panel/contents/FilePanel.svelte";
+    import SettingsSidePanel from "../panel/contents/SettingsSidePanel.svelte";
     import Emulator from "../emulator/Emulator.svelte";
     import { setWM, WM } from "../windows/WM";
     import StatusBar from "../statusbar/StatusBar.svelte";
@@ -75,6 +76,13 @@
             clickable: true,
             tooltip: "File",
             panel: Git
+        },
+        {
+            id: "settingspage",
+            Icon: Settings2Icon,
+            clickable: true,
+            tooltip: "Settings",
+            panel: SettingsSidePanel,
         }
     ] as SidePanelItem<unknown>[];
     let items: SidePanelItem<unknown>[] | undefined = $state();

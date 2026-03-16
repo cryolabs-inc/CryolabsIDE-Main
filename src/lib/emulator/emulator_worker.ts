@@ -374,11 +374,12 @@ async function workerCode(getSrvRoot: () => string) {
                 await localforage.setItem("disk_downloaded", diskBuffer);
             } catch { };
         } catch (e) {
-            if (e instanceof Error) {
-                console.error(e.message);
-            } else {
-                throw e;
-            }
+            let message = e instanceof Error ? e.message : String(e);
+            console.error(message);
+            progressGroup.forEach(port => {
+                port.postMessage({ type: "downloadError", message });
+            });
+            return;
         }
     }
 
@@ -442,6 +443,12 @@ async function workerCode(getSrvRoot: () => string) {
     let initinstance = new v86.V86(v86_startupoptions);
     Object.defineProperty(self, 'emulator', { value: initinstance, configurable: true, writable: true });
     // Object.defineProperty(self, 'msgLoop', {value: new MessageLoop(), configurable: true, writable: true});
+    initinstance.add_listener("download-error", ({file_name: filename}: {file_name: string})=>{
+        progressGroup.forEach(port => {
+            port.postMessage({ type: "downloadError", message: `v86 failed to download: ${filename}` });
+        });
+        vm_instance.Resolve(initinstance);
+    })
     initinstance.add_listener("emulator-ready", () => {
         vm_instance.Resolve(initinstance);
         let readyBuf = new Uint8Array();

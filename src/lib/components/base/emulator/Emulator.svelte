@@ -60,8 +60,15 @@
         let api = comlink.wrap(await getEmulatorPort(basePath)) as WorkerHandlerAPI;
         let serialPort = new MessageChannel();
         let downloadNotif: ReturnType<typeof papi.statusBar.addNotification> | undefined;
+
+        let editorDecision: { resolve: (useMonaco: boolean) => void; promise: Promise<boolean> } = (() => {
+            let resolve!: (useMonaco: boolean) => void;
+            let promise = new Promise<boolean>(r => { resolve = r; });
+            return { resolve, promise };
+        })();
+
         serialPort.port1.onmessage = (e) => {
-            let evt = e as MessageEvent<{ type: string; data: string; total?: number; loaded?: number }>;
+            let evt = e as MessageEvent<{ type: string; data: string; total?: number; loaded?: number; message?: string }>;
             if (evt.data.type === "terminalData") {
                 terminalEmitter.emit(evt.data.data);
             } else if (evt.data.type === "progress") {
@@ -86,6 +93,20 @@
                     downloadNotif.dispose();
                     downloadNotif = undefined;
                 }
+                editorDecision.resolve(false);
+            } else if (evt.data.type === "downloadError") {
+                if (downloadNotif) {
+                    downloadNotif.dispose();
+                    downloadNotif = undefined;
+                }
+                console.warn("[Emulator] Disk download failed, falling back to Monaco editor:", evt.data.message);
+                papi.statusBar.addNotification({
+                    title: "Download failed",
+                    label: evt.data.message ?? "Failed to download disk image. LSP features unavailable.",
+                    kind: "error"
+                });
+                editorDecision.resolve(true);
+                // papi.emitAllLoaded();
             }
         };
 
@@ -106,7 +127,8 @@
         let epapi = comlink.wrap(extensionAPIChannel.port1) as ExtensionAPI;
 
         let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
-        resourceManager.registerScheme("file", new FileHandler(fs));
+        let useMonaco = await editorDecision.promise;
+        resourceManager.registerScheme("file", new FileHandler(fs, useMonaco));
         resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
         papi.addTerminal("serial0", {
             textEv: terminalEmitter.event,

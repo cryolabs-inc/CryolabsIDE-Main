@@ -41,6 +41,7 @@
         await Prefs.default().store("git.personal_access", ghToken);
         return ghToken;
     }
+    let isTokenFailed = $state(false);
     onMount(async () => {
         if (!pageApi.dialogManager) return;
         while (true) {
@@ -55,6 +56,10 @@
                 ghToken = await requestToken(dm);
             }
 
+            if (!ghToken) {
+                isTokenFailed = true;
+                break;
+            }
             srcCtrlGit = await pageApi.getFromPat(ghToken);
             if (!srcCtrlGit) {
                 await Prefs.default().store("git.personal_access", null);
@@ -72,8 +77,11 @@
 
 <div class="p-1 w-full h-full">
     <p class="text-xl">Source control</p>
-    {#if !srcCtrlGit}
+    {#if isTokenFailed} 
+        No Token has been entered. You need to enter a token.
+    {:else if !srcCtrlGit}
         <p>Loading content...</p>
+    
     {:else if ghLink}
         <p>Linked to: {ghLink.owner}/{ghLink.repo} <a
             href="javascript:void(0);"
@@ -138,4 +146,5 @@
             >.
         </p>
     {/if}
+    
 </div>

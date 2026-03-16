@@ -38,12 +38,12 @@
                 <!-- Notifications list -->
                 <div class="flex-1 overflow-y-auto">
                     {#each notifs as notif (notif.id)}
-                        <div class="px-4 py-3 border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
-                            <div class="text-white font-medium mb-1">{notif.title}</div>
-                            <div class="text-gray-400 text-sm">{notif.label}</div>
+                        <div class="px-4 py-3 border-b border-gray-800 hover:bg-gray-800/50 transition-colors {notif.kind === 'error' ? 'bg-red-950/30' : ''}">
+                            <div class="font-medium mb-1 {notif.kind === 'error' ? 'text-red-400' : 'text-white'}">{notif.title}</div>
+                            <div class="text-sm {notif.kind === 'error' ? 'text-red-300/70' : 'text-gray-400'}">{notif.label}</div>
                             {#if notif.progress}
                                 <div class="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
-                                    <div class="h-full bg-blue-500 rounded-full transition-all duration-300" style="width: {notif.progress.percent ?? 0}%"></div>
+                                    <div class="h-full rounded-full transition-all duration-300 {notif.kind === 'error' ? 'bg-red-500' : 'bg-blue-500'}" style="width: {notif.progress.percent ?? 0}%"></div>
                                 </div>
                             {/if}
                         </div>

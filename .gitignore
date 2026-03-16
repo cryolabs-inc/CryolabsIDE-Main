@@ -32,3 +32,4 @@ vite.config.ts.timestamp-*
 /base_client_image/mu-cxx/build
 /home
 /static/disk.sqfs
+/dist

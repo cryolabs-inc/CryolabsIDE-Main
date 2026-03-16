@@ -12,6 +12,8 @@ import { O_TRUNC } from "@zenfs/core/constants.js";
 import Git from "./viewers/git/Git.svelte";
 import CodemirrorEditor from "./viewers/CodemirrorEditor.svelte";
 import * as langCpp from '@codemirror/lang-cpp';
+import SettingsPage from "./viewers/SettingsPage.svelte";
+import { Prefs } from "$lib/base/prefs";
 // --- Resource Types ---
 
 
@@ -270,29 +272,44 @@ class HttpHandler extends SimpleResourceHandler {
 
 export class FileHandler extends SimpleResourceHandler {
     fsAPI: FSProviderAPI;
-    constructor(fileSystemAPI: FSProviderAPI) {
+    forceMonaco: boolean;
+    constructor(fileSystemAPI: FSProviderAPI, forceMonaco = false) {
         super();
         this.fsAPI = fileSystemAPI;
+        this.forceMonaco = forceMonaco;
     }
 
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
         const getRequest = await this.doGet(request);
         let fsP = this.fsAPI;
-        if ((getRequest.status >= 200 && getRequest.status < 300) && getRequest.resource && getRequest.resource.type === "data" && getRequest.resource.data.data)
-            
+        if ((getRequest.status >= 200 && getRequest.status < 300) && getRequest.resource && getRequest.resource.type === "data" && getRequest.resource.data.data) {
+            const filePath = this.getPathnameFromRequest(request);
+            const value = getRequest.resource.data.data;
+            const onChangeContent = async (newC: Uint8Array) => {
+                await fsP.writeFile(filePath, newC.buffer as ArrayBuffer, newC.length, 0, O_TRUNC);
+                await fsP.truncate(filePath, newC.byteLength);
+            };
+            const savedMode = await Prefs.default().get<"codemirror" | "monaco">("editor.mode", "codemirror");
+            if (this.forceMonaco || savedMode === "monaco") {
+                return new ResourceResponse<[typeof MonacoEditor]>(getRequest.status, getRequest.statusMessage, {
+                    resource: {
+                        type: "panel",
+                        data: {
+                            component: MonacoEditor,
+                            props: { value, onChangeContent, filePath }
+                        }
+                    }
+                });
+            }
             return new ResourceResponse<[typeof CodemirrorEditor]>(getRequest.status, getRequest.statusMessage, {
                 resource: {
                     "type": "panel",
                     data: {
                         component: CodemirrorEditor,
                         props: {
-                            value: getRequest.resource.data.data,
-                            onChangeContent: async (newC) => {
-                                await fsP.writeFile(this.getPathnameFromRequest(request), newC.buffer as ArrayBuffer, newC.length, 0, O_TRUNC);
-                                await fsP.truncate(this.getPathnameFromRequest(request), newC.byteLength);
-
-                            },
-                            filePath: this.getPathnameFromRequest(request),
+                            value,
+                            onChangeContent,
+                            filePath,
                             lsp_config: {
                                 lang_id: "cpp",
                                 lang_command: "/usr/bin/clangd",
@@ -303,6 +320,7 @@ export class FileHandler extends SimpleResourceHandler {
                     }
                 }
             });
+        }
 
         return ResourceResponse.notFound();
     }
@@ -387,6 +405,15 @@ export class GitManager extends SimpleResourceHandler {
         return ResourceResponse.notFound();
     }
 }
+class SettingsSchemeHandler extends SimpleResourceHandler {
+    async doRetrpanel(_request: Request): Promise<ResourceResponse> {
+        return ResourceResponse.ok<[typeof SettingsPage]>("panel", {
+            component: SettingsPage,
+            props: {}
+        });
+    }
+}
+
 // --- Resource Manager ---
 
 export class ResourceManager {
@@ -423,7 +450,8 @@ export class ResourceManager {
             .registerScheme("https", new HttpHandler())
             .registerScheme("sample", new Sample())
             .registerScheme('about', new AboutManager())
-            .registerScheme("git", new GitManager());
+            .registerScheme("git", new GitManager())
+            .registerScheme("settings", new SettingsSchemeHandler());
     }
 }
 
