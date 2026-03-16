@@ -12,7 +12,7 @@ if [[ -n $SCRIPT_PATH ]]
 then
     echo "running this docker command"
     docker run -it -v "$(dirname $SCRIPT_PATH):/mnt" --name tempRE ctf/tmp-emulator-image  sh -c "/mnt/$(basename $SCRIPT_PATH);"
-    sleep 5
+    
 else
     docker run -d --rm --name tempRE ctf/tmp-emulator-image sleep infinity
 fi

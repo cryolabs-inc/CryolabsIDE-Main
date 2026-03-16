@@ -33,7 +33,7 @@
     let papi = new PageAPI(rc, rootURL);
     setPageAPI(papi);
 
-    let wm = new WM();
+    let wm = new WM(false);
     wm.contexts = getAllContexts();
     setWM(wm);
 

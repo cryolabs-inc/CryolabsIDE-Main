@@ -33,3 +33,5 @@ vite.config.ts.timestamp-*
 /home
 /static/disk.sqfs
 /dist
+/package-lock.json
+/static/initrd

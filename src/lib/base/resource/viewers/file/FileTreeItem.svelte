@@ -40,6 +40,7 @@
     let label = $derived(isRootDir ? tdp.rootLabel : ftreeItem.label);
     let dirs = $state<HTMLInputElement>();
     let isSelected = $state<boolean>(false);
+    let err = $state<string>();
     let contextMenuActions = $derived.by(() => {
         // Get all selected entries
         const selectedEntries = tdp.allEntries.filter(e => tdp.selectedEntries.has(e.filePath));
@@ -141,7 +142,9 @@
 
         let disp: Disposable | undefined = undefined;
         (async () => {
+            try {
             let interm = await tdp.getChildren(ftreeItem);
+            
             if (!interm) return;
             childrenTreeItems = interm.slice().sort((a, b)=>{return a.prio - b.prio}) as FileEntry[];
             disp = await tdp.fsApi.watchForRefresh(
@@ -151,6 +154,9 @@
                     }
                 }),
             );
+            } catch (E) {
+                err = "Unable to read directory. <br /> Possible causes: Directory might not exist, or requested view pointed to a file."
+            }
         })();
         return () => {
             tdp.unregisterEntry(ftreeItem);
@@ -345,6 +351,9 @@
     </div>
     
 {/snippet}
+{#if err!=null}
+<div>{@html err}</div>
+{:else}
 <div bind:this={wholeDiv} ondrop={droppedFile.bind(null, ftreeItem.filePath)} role="directory" ondragover={e=>{
     
     e.preventDefault();
@@ -394,3 +403,4 @@
         </ContextMenuContent>
     </ContextMenu>
 </div>
+{/if}

@@ -140,6 +140,12 @@
 
     papi.fsPromise.Resolve(fs);
     papi.extPromise.Resolve(epapi);
+    try {
+    await fs.mkdir("/user");
+    await fs.mkdir("/root");
+    } catch {
+        // best effort
+    }
     add_langs(papi);
     let usp = new URLSearchParams();
     let fpath = "/root" + papi.rootPath;

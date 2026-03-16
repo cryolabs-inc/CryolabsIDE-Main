@@ -8,6 +8,7 @@
     let fileAPI = $state<FSProviderAPI>();
     let papi = usePageAPI();
     let rootFileEntry = $derived(new FileEntry(rootDir, "directory", papi, true));
+    
     let treeDataProvider = $derived<FT | undefined>(
         fileAPI && new FT(fileAPI, papi, rootFileEntry),
     );

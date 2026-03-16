@@ -88,7 +88,7 @@ export class WM {
             }
         }
     }
-    constructor() {
+    constructor(showGrapple = true) {
         let d = document.createElement('div');
         d.style.display = "flex";
         d.style.flexDirection = "row-reverse";
@@ -104,6 +104,9 @@ export class WM {
         this.rootElement.appendChild(d);
         this.minimizedWindowElement = d;
         this.makeDraggable(d, dragHandle);
+        if (!showGrapple) {
+            d.style.display = "none";
+        }
 
     }
     launchWindow(url: string, { contexts, openMode, ...rest }: {

@@ -5,7 +5,7 @@
     import { onMount } from "svelte";
     import yaml from 'yaml';
     let loc = location.search;
-    let rootURL = "file:///";
+    let rootURL = "file:///user";
     let u = new URLSearchParams(loc).get('url');
     if (u) {
         rootURL = u;

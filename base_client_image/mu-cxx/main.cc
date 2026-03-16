@@ -147,11 +147,21 @@ typedef struct {
   uint32_t epoll_fd;
 } EpollData;
 
+// Track EpollData pointers so they can be freed when listeners are unregistered
+static std::map<int, EpollData *> epd_registry;
+
 static int32_t epoll_fd = epoll_create(20);
 const int32_t EPOLL_NUM_EVENTS = 20;
 
 int unreg_listener(int fd) {
-  return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+  // Remove from epoll first, then free the EpollData if we have one
+  int res = epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+  auto it = epd_registry.find(fd);
+  if (it != epd_registry.end()) {
+    free(it->second);
+    epd_registry.erase(it);
+  }
+  return res;
 }
 
 int reg_listener(int fd, PFNEPOLLCALLBACK listener, void *user_data,
@@ -168,6 +178,8 @@ int reg_listener(int fd, PFNEPOLLCALLBACK listener, void *user_data,
     free(epd);
     return err;
   }
+  // Store the pointer so it can be freed later when unregistered
+  epd_registry[fd] = epd;
   return 0;
 }
 
@@ -901,7 +913,7 @@ static void sigchld_handler(int sig) {
         s->data_bytes.resize(sizeof(ca));
         memcpy(s->data_bytes.data(), ca, sizeof(ca));
         s->send_data_bytes(s, 0, MSG_KILLPROCESSRESPONSE);
-        break;
+        destroy_fd_state(a);
       }
       pids_to_fdstates.erase(it);
     }
@@ -1088,4 +1100,5 @@ int main(int argc, char **argv) {
       }
     }
   }
+  free(poll_evts);
 }

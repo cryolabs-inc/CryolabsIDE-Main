@@ -325,14 +325,28 @@ self.onmessage = (e) => {
     port.start();
     if (e.data.start) {
         let gsrvroot = () => (e.data.basePath as string) ?? getSrvRoot()
-        workerCode(gsrvroot);
+        startEmulator(gsrvroot);
     }
 };
-
-async function workerCode(getSrvRoot: () => string) {
+/**
+ * Required files: 
+ * - disk (download from github repository)
+ * - bzImage (download from github repository)
+ * - seabios.bin (provided)
+ * - vgabios.bin (provided)
+ * - libv86.mjs (provided)
+ * - initrd (download from github repository)
+ * - v86.wasm (provided)
+ * If these files are not provided, an error will be passed back to the main thread that will talk about what file was missing.
+ * @param getSrvRoot Gets the server root through a function. May be customized if CDN or some other source is used.
+ * @returns {Promise<void>}
+ */
+async function startEmulator(getSrvRoot: () => string) {
     let v86 = await downloadV86(getSrvRoot);
-    let disk_storage = await localforage.getItem("disk_downloaded") as ArrayBuffer | undefined;
-    if (!disk_storage) {
+    let disk_storage = null;
+
+    
+    if (!(await localforage.keys()).includes("disk_downloaded")) {
 
         console.log("Downloading disk image");
         try {
@@ -357,6 +371,10 @@ async function workerCode(getSrvRoot: () => string) {
                     });
                 });
             }
+            await fsP.mkdir("/root", {recursive: true});
+            await fsP.writeFile("/root/root.img", new Uint8Array(0));
+            let fh =await webfs.get("file", "/root/root.img");
+            let writ = await fh.createSyncAccessHandle();
             while (true) {
                 let ch = await reader.read();
                 if (ch.done) {
@@ -365,14 +383,20 @@ async function workerCode(getSrvRoot: () => string) {
                 }
                 bytes.set(ch.value, off);
                 onProgress(diskBuffer.byteLength, off);
-
+                writ.write(ch.value, {at: off});
                 off += ch.value.length;
             }
+            let siz = writ.getSize();
+           writ.close();
+            webfs.index.get("/root/root.img")?.update({
+                size: siz
+            })
 
-            disk_storage = diskBuffer;
-            try {
-                await localforage.setItem("disk_downloaded", diskBuffer);
-            } catch { };
+            // disk_storage = diskBuffer;
+            // try {
+            //     await localforage.setItem("disk_downloaded", diskBuffer);
+            // } catch { };
+            await localforage.setItem("disk_downloaded", true);
         } catch (e) {
             let message = e instanceof Error ? e.message : String(e);
             console.error(message);
@@ -381,6 +405,8 @@ async function workerCode(getSrvRoot: () => string) {
             });
             return;
         }
+    }else {
+        disk_storage = undefined;
     }
 
     setTimeout(() => {
@@ -398,11 +424,12 @@ async function workerCode(getSrvRoot: () => string) {
     let initArgs = [uri.href, "sdjfksjf"];
     let initArgsB64 = initArgs.map(v => btoa(v));
     let final = initArgsB64.join(" ");
-    let hda = disk_storage && {
-        buffer: disk_storage,
-        size: disk_storage.byteLength
-    };
-
+    
+    // let hda = disk_storage && {
+    //     buffer: disk_storage,
+    //     size: disk_storage.byteLength
+    // };
+    disk_storage = undefined;
     let v86_startupoptions = {
         bios: {
             url: getSrvRoot() + "seabios.bin"
@@ -415,16 +442,20 @@ async function workerCode(getSrvRoot: () => string) {
             size: 7647744,
         },
         // },
-        hda,
-        cmdline: `console=ttyS0 root=/dev/sda rootfstype=ext4 init=/sbin/init`,
+        // hda,
+        cmdline: `console=ttyS0`,
         wasm_path: `${getSrvRoot()}v86.wasm`,
-        memory_size: 1024 * 1024 * 512,
+        memory_size: 1024 * 1024 * 256,
         disable_keyboard: true,
         disable_mouse: true,
         virtio_console: true,
         autostart: true,
         "filesystem": {
             handle9p: getHandler(globChEmitter)
+        },
+        "initrd": {
+            "url": "/initrd"
+            
         },
         net_device: {
             type: "virtio",

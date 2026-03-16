@@ -10,9 +10,11 @@ let rootDir = await rot.getDirectoryHandle('files1', {create: true});
 class WebAccess2 extends WebAccessFS {
     idxHandle: FileSystemFileHandle;
     gettingIdx: boolean = false;
+
     constructor(rootHandle: FileSystemDirectoryHandle, indexHandle: FileSystemFileHandle, disableHandleCache = false) {
         super(rootHandle, disableHandleCache);
         this.idxHandle = indexHandle;
+        this.attributes.set("no_async_preload");   
     }
     
     async initialize() {
