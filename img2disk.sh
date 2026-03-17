@@ -28,8 +28,11 @@ tar -xf  disk.tar -C ext_out
 exec 1>&3
 mkfs.ext4 disk -d ext_out -FF
 rm disk.sqfs
-mksquashfs ext_out disk.sqfs
+#mksquashfs ext_out disk.sqfs
 rm -rf ext_out 
 docker stop -t0 tempRE
 docker rm tempRE || :
 docker image rm ctf/tmp-emulator-image
+rm boot.tar
+rm vmlinuz-virt
+rm initramfs-virt
