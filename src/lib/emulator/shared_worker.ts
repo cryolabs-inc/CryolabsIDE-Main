@@ -17,7 +17,7 @@ self.onconnect = (e) => {
 
     connectingPort.start()
     connectingPort.addEventListener('message', (ev) => {
-        let { data } = ev as Msg;
+        const { data } = ev as Msg;
         switch (data.type) {
             case "LockAcquired":
                 if (!sessionLeader) {

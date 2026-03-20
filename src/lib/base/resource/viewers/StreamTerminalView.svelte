@@ -4,6 +4,7 @@
     import { FitAddon } from "@xterm/addon-fit";
     import { onMount } from "svelte";
     import type { TypedEvent } from "$lib/base/events/events";
+    import type { ExtensionAPI } from "$lib/emulator/types";
     let {
         cmd,
         args,
@@ -23,22 +24,22 @@
         let addon = new FitAddon();
         term.loadAddon(addon);
         term.open(d);
-
+let psd: Awaited<ReturnType<ExtensionAPI["openPtyToShell"]>>|undefined = undefined;
         addon.fit();
         (async () => {
             let api = await p.ext;
 
-            let psd = await api.openPtyToShell(cmd, args);
+           psd  = await api.openPtyToShell(cmd, args);
             let { readable, writable } = await psd.streams(); // only allowed once
             if (onUnload)
                 onUnload(() => {
-                    psd.kill();
+                    psd?.kill();
                 });
             addon.fit();
             await psd.resize(term.cols, term.rows);
             new ResizeObserver((ent) => {
                 addon.fit();
-                psd.resize(term.cols, term.rows);
+                psd?.resize(term.cols, term.rows);
             }).observe(d);
             
 
@@ -65,6 +66,7 @@
             });
         })();
         return () => {
+            psd?.kill();
             term.dispose();
         };
     });

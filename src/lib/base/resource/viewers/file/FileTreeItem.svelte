@@ -16,7 +16,7 @@
     import ContextMenuContent from "$lib/components/ui/context-menu/context-menu-content.svelte";
     import { ContextMenuCheckboxItem } from "$lib/components/ui/context-menu";
     import { S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
-    import path from "path";
+    import path from "path-browserify";
     import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
     import ContextMenuSeparator from "$lib/components/ui/context-menu/context-menu-separator.svelte";
     import ContextMenuLabel from "$lib/components/ui/context-menu/context-menu-label.svelte";
@@ -273,7 +273,7 @@
                             }}
                             draggable={!isRenaming}
                             href={ftreeItem.link.href}
-                            target={"upper"}
+                            target="upper"
                         >
                             {ftreeItem.label}
                         </Link>

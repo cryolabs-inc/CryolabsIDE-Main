@@ -17,6 +17,6 @@
 {:then config}
     <FullEditor basePath={config.emulator_base} {rootURL}></FullEditor>
 {:catch}
-    <FullEditor basePath={"/"} {rootURL}></FullEditor>
+    <FullEditor basePath="/" {rootURL}></FullEditor>
 
 {/await}

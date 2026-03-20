@@ -4,7 +4,7 @@
     import { dndzone } from "svelte-dnd-action";
     import { flip } from "svelte/animate";
     import type { TabItem } from "../panel/TabbedPanelCtx";
-    import path from "path";
+    import path from "path-browserify";
     import type { Attachment } from "svelte/attachments";
     import {type HTMLAttributes} from 'svelte/elements';
     import { getWM } from "../windows/WM";

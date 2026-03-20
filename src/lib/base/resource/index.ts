@@ -83,14 +83,14 @@ export class ResourceResponse<T extends any[] = any[], R = Resource<T>> {
         this.headers = headers;
     }
     get type() {
-        let r = this as ResourceResponse;
+        const r = this as ResourceResponse;
         if (!r.resource) {
             return "none";
         }
         return r.resource?.type;
     }
     get panel() {
-        let r = this as ResourceResponse;
+        const r = this as ResourceResponse;
         if (!r.resource || r.resource.type !== "panel") {
             throw new Error("Trying to get a panel from a non-panel response.");
         }
@@ -99,7 +99,7 @@ export class ResourceResponse<T extends any[] = any[], R = Resource<T>> {
         }
     }
     get blob() {
-        let r = this as ResourceResponse;
+        const r = this as ResourceResponse;
         if (!r.resource || r.resource.type !== "data") {
             throw new Error("Trying to read the blob data from a non-data response.");
         }
@@ -111,7 +111,7 @@ export class ResourceResponse<T extends any[] = any[], R = Resource<T>> {
         }
     }
     get stream() {
-        let b = this.blob;
+        const b = this.blob;
         return new Response(b).body;
     }
     static async fromFetchResponse(fetchResponse: Response): Promise<ResourceResponse> {
@@ -240,7 +240,7 @@ class HttpHandler extends SimpleResourceHandler {
         const response = await this.fetch(getRequest);
 
         if (response.resource && response.resource.type === "data") {
-            let dat = response.resource.data.data;
+            const dat = response.resource.data.data;
             if (dat?.type === "text/html") {
                 return new ResourceResponse<[typeof RawTextViewer]>(response.status, response.statusMessage, {
                     resource: {
@@ -269,19 +269,22 @@ class HttpHandler extends SimpleResourceHandler {
         return ResourceResponse.notFound();
     }
 }
-
+type ViewmodeCallback = (request: Request)=>ResourceResponse<any, any>;
 export class FileHandler extends SimpleResourceHandler {
     fsAPI: FSProviderAPI;
     forceMonaco: boolean;
-    constructor(fileSystemAPI: FSProviderAPI, forceMonaco = false) {
+    viewModes: Map<string, ViewmodeCallback> = new Map();
+    constructor(fileSystemAPI: FSProviderAPI, forceMonaco = false, viewModeMap: Map<string, ViewmodeCallback>=new Map()) {
         super();
         this.fsAPI = fileSystemAPI;
         this.forceMonaco = forceMonaco;
+        this.viewModes = viewModeMap;
     }
 
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
         const getRequest = await this.doGet(request);
-        let fsP = this.fsAPI;
+        const fsP = this.fsAPI;
+
         if ((getRequest.status >= 200 && getRequest.status < 300) && getRequest.resource && getRequest.resource.type === "data" && getRequest.resource.data.data) {
             const filePath = this.getPathnameFromRequest(request);
             const value = getRequest.resource.data.data;
@@ -289,6 +292,14 @@ export class FileHandler extends SimpleResourceHandler {
                 await fsP.writeFile(filePath, newC.buffer as ArrayBuffer, newC.length, 0, O_TRUNC);
                 await fsP.truncate(filePath, newC.byteLength);
             };
+            let searchParams = new URL(request.url).searchParams;
+            if (searchParams.has("viewMode")) {
+                let viewMode = searchParams.get('viewMode')!;
+                let resp = this.viewModes.get(viewMode)?.(request);
+                if (resp) {
+                    return resp;
+                }
+            }
             const savedMode = await Prefs.default().get<"codemirror" | "monaco">("editor.mode", "codemirror");
             if (this.forceMonaco || savedMode === "monaco") {
                 return new ResourceResponse<[typeof MonacoEditor]>(getRequest.status, getRequest.statusMessage, {
@@ -328,14 +339,14 @@ export class FileHandler extends SimpleResourceHandler {
         return new URL(request.url).pathname;
     }
     async doGet(request: Request): Promise<ResourceResponse> {
-        let fsPath = this.getPathnameFromRequest(request);
-        let fsP = this.fsAPI;
+        const fsPath = this.getPathnameFromRequest(request);
+        const fsP = this.fsAPI;
 
         try {
-        let newC = await fsP.stat(fsPath);
+        const newC = await fsP.stat(fsPath);
 
-            let readBuffer = (await fsP.readFile(fsPath, newC.size, 0)) as Uint8Array<ArrayBuffer>;
-            let mt = (await fileTypeFromBuffer(readBuffer))?.mime || Mime.getType(path.extname(fsPath))   || "";
+            const readBuffer = (await fsP.readFile(fsPath, newC.size, 0)) as Uint8Array<ArrayBuffer>;
+            const mt = (await fileTypeFromBuffer(readBuffer))?.mime || Mime.getType(path.extname(fsPath))   || "";
             return ResourceResponse.ok("data", {
                 data: new Blob([readBuffer], { type: mt  })
             });
@@ -344,16 +355,16 @@ export class FileHandler extends SimpleResourceHandler {
         }
     }
     async doPut(request: Request): Promise<ResourceResponse> {
-        let fsPath = this.getPathnameFromRequest(request);
-        let fsP = this.fsAPI;
-        let buffer = new Uint8Array(await request.arrayBuffer());
+        const fsPath = this.getPathnameFromRequest(request);
+        const fsP = this.fsAPI;
+        const buffer = new Uint8Array(await request.arrayBuffer());
         await fsP.writeFile(fsPath, buffer.buffer, buffer.byteLength, 0);
         return ResourceResponse.ok("none");
     }
 }
 export class FileTreePanelHandler extends FileHandler {
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
-        let pname = this.getPathnameFromRequest(request);
+        const pname = this.getPathnameFromRequest(request);
         return ResourceResponse.ok<[typeof FileTreeViewer]>("panel", {
             component: FileTreeViewer,
             props: {
@@ -364,7 +375,7 @@ export class FileTreePanelHandler extends FileHandler {
 }
 class RawResourceHandler extends SimpleResourceHandler {
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
-        let p = await this.doGet(request);
+        const p = await this.doGet(request);
         return ResourceResponse.ok<[typeof RawTextViewer]>("panel", {
             component: RawTextViewer,
             props: {
@@ -385,7 +396,7 @@ class Sample extends RawResourceHandler {
 }
 export class AboutManager extends SimpleResourceHandler {
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
-        let url = new URL(request.url);
+        const url = new URL(request.url);
         if (url.pathname === "blank") {
             return ResourceResponse.ok<[typeof HtmlViewer]>("panel", {component: HtmlViewer, props: {html: ""}});
         }
@@ -394,7 +405,7 @@ export class AboutManager extends SimpleResourceHandler {
 }
 export class GitManager extends SimpleResourceHandler {
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
-        let path = this.pathname(request);
+        const path = this.pathname(request);
         
         if (path === "/ui") {
             return ResourceResponse.ok<[typeof Git]>("panel", {

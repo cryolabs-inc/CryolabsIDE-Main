@@ -5,7 +5,7 @@ import type { TypedEvent } from "./events/events";
 export class ResourceLinkContext {
     onLinkClicked: TypedEvent<{link: string, target: string}>;
     constructor() {
-        let em = new Emitter<{ link: string, target: string }>();
+        const em = new Emitter<{ link: string, target: string }>();
         this.dispatchEventClicked = em.emit.bind(em);
         this.onLinkClicked = em.event.bind(em);
     }
@@ -16,5 +16,5 @@ export class ResourceLinkContext {
         this.dispatchEventClicked({link, target});
     }
 }
-let [get, set] = createContext<ResourceLinkContext>();
+const [get, set] = createContext<ResourceLinkContext>();
 export {get as useResourceLinkCtx, set as setResourceLinkCtx}

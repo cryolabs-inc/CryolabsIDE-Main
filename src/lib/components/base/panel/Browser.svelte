@@ -10,9 +10,9 @@
         XIcon,
     } from "@lucide/svelte";
     import DraggbleItemList from "../items/DraggbleItemList.svelte";
-    import { onMount } from "svelte";
+    import { onMount, type Component, type Snippet } from "svelte";
     import { useResourceLinkCtx } from "$lib/base/resourceCtx";
-    import path from "path";
+    import path from "path-browserify";
     import type { TabItem } from "./TabbedPanelCtx";
     import { ConstructExtendablePromise } from "$lib/utils";
     import ContextMenu from "$lib/components/ui/context-menu/context-menu.svelte";
@@ -106,8 +106,13 @@
     rctx.onLinkClicked(tab_open);
     let rm = getResourceManager();
     
-    async function getPanel(tab: TabItem) {
-        await extProm;
+    async function getPanel(tab: TabItem): Promise<{
+        snip?: Snippet<[any]>,
+        Comp?: Component,
+        props?: any,
+        args?: any
+    }|null> {
+        await extProm.promise;
         tab.state = "loading";
         let resource = await rm.fetch(tab.objectURL, {
             method: "RETRPANEL",
@@ -119,9 +124,28 @@
                 props: resource.resource.data.props,
             };
         }
+        if (resource.resource && resource.resource.type === "data") {
+            if (resource.resource.data.data) {
+                let b = resource.resource.data.data;
+                let stringData = new TextDecoder().decode(new Uint8Array(await b.arrayBuffer()));
+                
+                if (b.type === "text/html") {
+                    return {
+                        snip: thtmlContent,
+                        args: stringData
+                    }
+                }
+                return {
+                    snip: txtContent,
+                    args: stringData
+                };
+
+            }
+        }
         if (resource.status === 404) {
             return {
                 snip: four04,
+                args: undefined
             };
         }
         return null;
@@ -148,8 +172,15 @@
     export const onActiveTabChanged = activeTabsChanged.event;
     export const onTabListChanged = tabListChanged.event;
 </script>
+{#snippet thtmlContent(content: string)}
+    {@html content}
 
-{#snippet four04()}
+{/snippet}
+{#snippet txtContent(content: string)}
+    {content}
+
+{/snippet}
+{#snippet four04(arg: undefined)}
     <div>This content was not found.</div>
 {/snippet}
 {#snippet Tab(tabItem: TabItem)}
@@ -212,7 +243,7 @@
             <s.Comp onUnload={tabItem.closeEvent?.event} {...s.props}></s.Comp>
         {/if}
         {#if s?.snip}
-            {@render s.snip()}
+            {@render s.snip(s.args as any)}
         {/if}
     {/await}
 {/snippet}

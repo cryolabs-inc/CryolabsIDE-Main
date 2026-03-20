@@ -1,4 +1,5 @@
 import type { DialogManager } from "$lib/base/dialog/DialogManager";
+import {languages} from '@codemirror/language-data'
 import type { Disposable } from "$lib/base/disposable";
 import { Emitter } from "$lib/base/events"
 import type { TypedEvent } from "$lib/base/events/events";
@@ -6,12 +7,13 @@ import type { ResourceLinkContext } from "$lib/base/resourceCtx";
 import type { ExtensionAPI, FSProviderAPI } from "$lib/emulator/types";
 import { SrcControlGit } from "$lib/git";
 import { ConstructExtendablePromise, type ExtendablePromise } from "$lib/utils";
-import path from "path";
+import path from "path-browserify";
 import { createContext } from "svelte";
 import * as toml from 'smol-toml';
 import * as codemirror from 'codemirror';
 import * as codemirror_lsp from '@codemirror/lsp-client';
 import { autocompletion } from "@codemirror/autocomplete";
+import type { ResourceResponse } from "$lib/base/resource";
 interface PTerminal {
     textEv: TypedEvent<string>;
     onResizeNeeded: TypedEvent<void>;
@@ -33,7 +35,7 @@ export class StatusBar {
     notifications: NotificationWithID[] = [];
     onNotificationListChangedEmitter: Emitter<void> = new Emitter();
     addNotification(notif: Notification): Disposable {
-        let notId = crypto.randomUUID();
+        const notId = crypto.randomUUID();
         this.notifications.push({ id: notId, ...notif });
         this.onNotificationListChangedEmitter.emit();
         return {
@@ -52,21 +54,68 @@ interface FileConfig {
         repo: string;
     };
 }
+type LangConfig = {
+    lang_command: string,
+    lang_args: string[]
+}
 class LanguageClients {
     page_api: PageAPI;
     lang_id_to_client: Map<string, Promise<codemirror_lsp.LSPClient>> = new Map();
+    lang_id_to_registration: Map<string, LangConfig> = new Map();
+    defaultRegistered: Promise<void>;
     constructor(page_api: PageAPI) {
         this.page_api = page_api;
+        this.defaultRegistered = this.registerAllConfigs();
     }
-    async loadLanguageClient(lang_id: string, language_cmd: string, language_cmd_args: string[] = []) {
-        let c = this.lang_id_to_client.get(lang_id);
+    async identifyLanguageId(file_path: string) {
+        let ename = path.extname(file_path);
+        console.log(languages)
+        for (let lang of languages){
+            
+            if (lang.extensions.filter(v=>ename.substring(1).toLowerCase() ===v.toLowerCase()).length > 0) return {lang_id: lang.name.toLowerCase(), lang_extension: await lang.load(), };
+        }
+        
+        return null;
+    }
+    async registerAllConfigs() {
+
+        await this.registerConfig("c++", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
+        await this.registerConfig("c", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
+    }
+    async registerConfig(lang_id: string, language_cmd: string, language_cmd_args: string[] = []) {
+        this.lang_id_to_registration.set(lang_id, {
+            lang_command: language_cmd,
+            lang_args: language_cmd_args
+        });
+    }
+    async loadLanguageClient(file_name: string) {
+        const ret = await this.identifyLanguageId(file_name);
+        if (!ret) return null;
+        const {lang_id, lang_extension} = ret;
+        console.log(lang_id);
+        console.log(this.lang_id_to_registration);
+        const c = this.lang_id_to_client.get(lang_id);
+        const langRegistration = this.lang_id_to_registration.get(lang_id);
+        if (!langRegistration) {
+            return null;
+        }
+        const language_cmd = langRegistration.lang_command;
+        const language_cmd_args = langRegistration.lang_args;
         if (c) {
-            return c;
+            return {
+                lang_extension,
+                client: c
+            };
         }
         this.lang_id_to_client.set(lang_id, new Promise(async (resolve) => {
-            let cx = await this.page_api.ext;
-            let proc = await cx.openProcess(language_cmd, language_cmd_args);
-            let s = await proc.streams();
+            let clT = setTimeout(()=>{
+                this.lang_id_to_client.delete(lang_id);
+            }, 5000);
+            const cx = await this.page_api.ext;
+            const proc = await cx.openProcess(language_cmd, language_cmd_args);
+            
+            const s = await proc.streams();
+            clearTimeout(clT);
             const encoder = new TextEncoder();
             const decoder = new TextDecoder();
             const HEADER_DELIMITER = "\r\n\r\n";
@@ -75,7 +124,7 @@ class LanguageClients {
             const stderr_reader = s.stderr.pipeThrough(new TextDecoderStream()).getReader();
             (async()=>{
                 while (true) {
-                    let res = await stderr_reader.read();
+                    const res = await stderr_reader.read();
                     if (res.done) {
                         break;
                     }
@@ -155,8 +204,8 @@ class LanguageClients {
                     }
                 }
             }
-            let ct = new CryolabsTransport();
-            let lsp_client =  new codemirror_lsp.LSPClient({
+            const ct = new CryolabsTransport();
+            const lsp_client =  new codemirror_lsp.LSPClient({
                 "extensions": [codemirror_lsp.serverDiagnostics()],
                 timeout: 100000,
             
@@ -168,11 +217,56 @@ class LanguageClients {
             });
             resolve(lsp_client);
         }));
-        return this.lang_id_to_client.get(lang_id)!;
+        return {client: this.lang_id_to_client.get(lang_id)!, lang_extension};
     }
 }
+const CODEMIRROR_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface CodemirrorCacheEntry {
+    view: codemirror.EditorView;
+    callbackRef: { fn: (data: Uint8Array) => void };
+    ttlTimer: ReturnType<typeof setTimeout> | null;
+}
+
+export class CodemirrorInstanceCache {
+    private entries = new Map<string, CodemirrorCacheEntry>();
+
+    acquire(filePath: string): CodemirrorCacheEntry | null {
+        const entry = this.entries.get(filePath);
+        if (!entry) return null;
+        if (entry.ttlTimer !== null) {
+            clearTimeout(entry.ttlTimer);
+            entry.ttlTimer = null;
+        }
+        return entry;
+    }
+
+    store(filePath: string, view: codemirror.EditorView, callbackRef: { fn: (data: Uint8Array) => void }) {
+        this.entries.set(filePath, { view, callbackRef, ttlTimer: null });
+    }
+
+    release(filePath: string) {
+        const entry = this.entries.get(filePath);
+        if (!entry) return;
+        entry.ttlTimer = setTimeout(() => {
+            entry.view.destroy();
+            this.entries.delete(filePath);
+        }, CODEMIRROR_TTL_MS);
+    }
+
+    destroyAll() {
+        for (const [, entry] of this.entries) {
+            if (entry.ttlTimer !== null) clearTimeout(entry.ttlTimer);
+            entry.view.destroy();
+        }
+        this.entries.clear();
+    }
+}
+
+type ViewmodeCallback = (request: Request)=>ResourceResponse<any, any>;
 export class PageAPI {
     readonly statusBar = new StatusBar();
+    readonly codemirrorCache = new CodemirrorInstanceCache();
     rc: ResourceLinkContext;
     rootURL: string;
     languageClients: LanguageClients = new LanguageClients(this);
@@ -180,6 +274,15 @@ export class PageAPI {
         return await SrcControlGit.fromPat(await this.fs, pat);
     }
     dialogManager: DialogManager | null = null;
+    viewModeMap: Map<string, ViewmodeCallback> = new Map();
+    registerViewMode(viewMode: string, callback: ViewmodeCallback): Disposable {
+        this.viewModeMap.set(viewMode, callback);
+        return {
+            dispose: ()=>{
+                this.viewModeMap.delete(viewMode);
+            }
+        }
+    }
     constructor(rc: ResourceLinkContext, rootURL = "file:///", dialogManager: DialogManager | null = null) {
         this.rc = rc;
         this.rootURL = rootURL;
@@ -196,8 +299,8 @@ export class PageAPI {
 
             try {
 
-                let fs = await this.fs;
-                let asLarge = await fs.readLargeFile(path.resolve(new URL(this.rootURL).pathname, "cryolabs.conf"));
+                const fs = await this.fs;
+                const asLarge = await fs.readLargeFile(path.resolve(new URL(this.rootURL).pathname, "cryolabs.conf"));
                 this._fileconfig = toml.parse(await asLarge.text())
                 resolve(this._fileconfig);
             } catch {
@@ -210,14 +313,15 @@ export class PageAPI {
     }
     async setFileConfig(s: FileConfig) {
         return navigator.locks.request("config-lock", async () => {
-            let fs = await this.fs;
+            const fs = await this.fs;
             try {
                 await fs.createFile(path.resolve(this.rootPath, "cryolabs.conf"));
             } catch {
 
             }
+            
             this._fileconfig = { ...s };
-            await fs.writeFile(path.resolve(this.rootPath, "cryolabs.conf"), new TextEncoder().encode(toml.stringify(s as toml.TomlTable)).buffer);
+            await fs.writeFile(path.resolve(this.rootPath, "cryolabs.conf"), new TextEncoder().encode(toml.stringify(s as toml.TomlTable)).buffer as ArrayBuffer);
 
         });
     }
@@ -230,6 +334,8 @@ export class PageAPI {
     }
     onAllLoaded = this.#onAllLoadedEmitter.event;
     #terminals: ({ id: string, term: PTerminal })[] = [];
+    #em = new Emitter<void>();
+    onTerminalsUpdated = this.#em.event;
     getTerminal(id: string) {
         return this.#terminals.filter(v => v.id === id)[0];
     }
@@ -237,6 +343,7 @@ export class PageAPI {
         this.#terminals.push({
             id, term
         });
+        this.#em.emit();
     }
 
     showTerminal(id: string) {

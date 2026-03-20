@@ -14,3 +14,5 @@ echo 'agetty_options="--autologin root"' >> /etc/conf.d/agetty.tty1
 sed -i '/tty1/d' /etc/inittab
 rc-update add agetty.ttyS0 default
 cp /mnt/bashrc /etc/bash/bashrc
+cp /mnt/ldr.sh /custom-init
+chmod +x /custom-init

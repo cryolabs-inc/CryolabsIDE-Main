@@ -4,7 +4,7 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import type { SrcControlGit } from "$lib/git";
     import { onMount } from "svelte";
-    import path from "path";
+    import path from "path-browserify";
     import type { DialogManager } from "$lib/base/dialog";
 
     let {}: {} = $props();

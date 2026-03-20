@@ -23,15 +23,15 @@ export class CryolabsIDETransport extends BaseMessageTransport {
      * Returns the number of bytes consumed, or -1 if incomplete.
      */
     read_full_message(): number {
-        let text = decoder.decode(this.buf, { stream: true });
-        let delimIdx = text.indexOf(HEADER_DELIMITER);
+        const text = decoder.decode(this.buf, { stream: true });
+        const delimIdx = text.indexOf(HEADER_DELIMITER);
         if (delimIdx === -1) {
             return -1;
         }
-        let headerSection = text.substring(0, delimIdx);
+        const headerSection = text.substring(0, delimIdx);
         let contentLength = -1;
-        for (let line of headerSection.split("\r\n")) {
-            let match = line.match(/^Content-Length:\s*(\d+)$/i);
+        for (const line of headerSection.split("\r\n")) {
+            const match = line.match(/^Content-Length:\s*(\d+)$/i);
             if (match) {
                 contentLength = parseInt(match[1], 10);
             }
@@ -39,32 +39,32 @@ export class CryolabsIDETransport extends BaseMessageTransport {
         if (contentLength < 0) {
             return -1;
         }
-        let headerBytes = encoder.encode(headerSection + HEADER_DELIMITER).byteLength;
-        let totalNeeded = headerBytes + contentLength;
+        const headerBytes = encoder.encode(headerSection + HEADER_DELIMITER).byteLength;
+        const totalNeeded = headerBytes + contentLength;
         if (this.buf.byteLength < totalNeeded) {
             return -1;
         }
-        let bodyBytes = this.buf.subarray(headerBytes, totalNeeded);
-        let bodyStr = decoder.decode(bodyBytes);
-        let message = JSON.parse(bodyStr) as Message;
+        const bodyBytes = this.buf.subarray(headerBytes, totalNeeded);
+        const bodyStr = decoder.decode(bodyBytes);
+        const message = JSON.parse(bodyStr) as Message;
         this._dispatchReceivedMessage(message);
         return totalNeeded;
     }
 
     async read_loop() {
         while (true) {
-            let res = await this.readableStream.read();
+            const res = await this.readableStream.read();
             if (res.done) {
                 this._onConnectionClosed();
                 break;
             }
-            let tmp_buf = res.value;
-            let old_buf = this.buf;
+            const tmp_buf = res.value;
+            const old_buf = this.buf;
             this.buf = new Uint8Array(old_buf.byteLength + tmp_buf.byteLength);
             this.buf.set(old_buf, 0);
             this.buf.set(tmp_buf, old_buf.byteLength);
             while (true) {
-                let num_read = this.read_full_message();
+                const num_read = this.read_full_message();
                 if (num_read < 0) {
                     break;
                 }
@@ -78,21 +78,21 @@ export class CryolabsIDETransport extends BaseMessageTransport {
     }
 
     protected async _sendImpl(message: Message): Promise<void> {
-        let body = JSON.stringify(message);
-        let bodyBytes = encoder.encode(body);
-        let header = `Content-Length: ${bodyBytes.byteLength}\r\n\r\n`;
-        let headerBytes = encoder.encode(header);
-        let packet = new Uint8Array(headerBytes.byteLength + bodyBytes.byteLength);
+        const body = JSON.stringify(message);
+        const bodyBytes = encoder.encode(body);
+        const header = `Content-Length: ${bodyBytes.byteLength}\r\n\r\n`;
+        const headerBytes = encoder.encode(header);
+        const packet = new Uint8Array(headerBytes.byteLength + bodyBytes.byteLength);
         packet.set(headerBytes, 0);
         packet.set(bodyBytes, headerBytes.byteLength);
         await this.writableStream.write(packet);
     }
 }
 export async function add_langs(pageAPI: PageAPI) {
-    let extend = await pageAPI.ext;
-    let clangd = await extend.openProcess("/usr/bin/clangd", ["--background-index"]);
-    let streams = await clangd.streams();
-    let transport = new CryolabsIDETransport(streams.stdout, streams.stdin);
-    let cli = new monaco.lsp.MonacoLspClient(transport);
+    // const extend = await pageAPI.ext;
+    // const clangd = await extend.openProcess("/usr/bin/clangd", ["--background-index"]);
+    // const streams = await clangd.streams();
+    // const transport = new CryolabsIDETransport(streams.stdout, streams.stdin);
+    // const cli = new monaco.lsp.MonacoLspClient(transport);
     
 }

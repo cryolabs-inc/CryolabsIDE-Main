@@ -13,7 +13,7 @@ export class TabContentsCtx<Tab = TabItem> {
     onBeforeClose: Emitter<void> = new Emitter();
     activeTab: Tab | null = null;
     close() {
-        let res = this.onBeforeClose.emit();
+        const res = this.onBeforeClose.emit();
         if (res)
             return;
         this.destroy();
@@ -23,5 +23,5 @@ export class TabContentsCtx<Tab = TabItem> {
     }
 
 }
-let [get, set] =createContext < TabContentsCtx>();
+const [get, set] =createContext < TabContentsCtx>();
 export {get as getTabContents, set as setTabContentsCtx};

@@ -3,10 +3,10 @@ import { S_IFDIR, S_IFMT } from '@zenfs/core/constants.js';
 import { WebAccess, WebAccessFS } from '@zenfs/dom';
 import { convertException } from '@zenfs/dom/utils.js';
 import { log, withErrno } from 'kerium';
-import p from 'path';
+import p from 'path-browserify';
 import { _throw } from 'utilium';
-let rot = await navigator.storage.getDirectory();
-let rootDir = await rot.getDirectoryHandle('files1', {create: true});
+const rot = await navigator.storage.getDirectory();
+const rootDir = await rot.getDirectoryHandle('files1', {create: true});
 class WebAccess2 extends WebAccessFS {
     idxHandle: FileSystemFileHandle;
     gettingIdx: boolean = false;
@@ -19,18 +19,18 @@ class WebAccess2 extends WebAccessFS {
     
     async initialize() {
         this.index.maxSize
-        let fil = await this.idxHandle.getFile();
+        const fil = await this.idxHandle.getFile();
         if (fil.size === 0) {
             return; // no data.
         }
-        let jso = await new Response(fil).json();
+        const jso = await new Response(fil).json();
         this.index.fromJSON(jso);
     }
     async saveIndex() {
         navigator.locks.request("nlock-fs", {mode: "exclusive"}, (async()=>{
-            let jsString = JSON.stringify(this.index.toJSON());
+            const jsString = JSON.stringify(this.index.toJSON());
             
-        let writable = await this.idxHandle.createWritable({keepExistingData: false});
+        const writable = await this.idxHandle.createWritable({keepExistingData: false});
         await writable.write(jsString);
         await writable.close();
         }));
@@ -92,11 +92,11 @@ class WebAccess2 extends WebAccessFS {
         await this.saveIndex();
     }
 }
-let int  = new WebAccess2(await rot.getDirectoryHandle("f1", {create: true}), await rot.getFileHandle('index', {create: true}));
+const int  = new WebAccess2(await rot.getDirectoryHandle("f1", {create: true}), await rot.getFileHandle('index', {create: true}));
 await int.initialize(); 
 async function saveIndex() {
-    let idx = await rot.getFileHandle('index', {create: true});
-    let writable = await idx.createWritable({keepExistingData: false});
+    const idx = await rot.getFileHandle('index', {create: true});
+    const writable = await idx.createWritable({keepExistingData: false});
     await writable.write(JSON.stringify(int.index));
     await writable.close();
 }
@@ -110,5 +110,5 @@ await configure({mounts: {
     '/': int
 }});
 
-let fsP = fs.promises;
+const fsP = fs.promises;
 export { fs, saveIndex, int as webfs,  fsP};

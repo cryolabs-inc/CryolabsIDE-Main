@@ -12,7 +12,10 @@
     import {serverCompletionSource, hoverTooltips, signatureHelp, LSPPlugin, languageServerSupport, serverCompletion} from '@codemirror/lsp-client';
     import Editor from "$lib/components/editor/Editor.svelte";
     import { autocompletion } from "@codemirror/autocomplete";
-    import { cppLanguage } from "@codemirror/lang-cpp";
+    import { cpp, cppLanguage } from "@codemirror/lang-cpp";
+    let map = {
+        cpp: []
+    }
     type LF<T> =
         T extends Component<infer Props>
             ? {
@@ -62,21 +65,34 @@
         (async()=>{
            
             if (!lsp_config) {
-                console.log("jada");
                ev = new codemirror.EditorView({
                 doc: await value.text(),
                 extensions: [...extArray ]
             });
                 return;
             }
-                console.log("with a langugae");
-
-            let lc = await page_api.languageClients.loadLanguageClient(lsp_config.lang_id,lsp_config.lang_command, lsp_config.lang_args);
+            await page_api.languageClients.defaultRegistered;
+            let lc = await page_api.languageClients.loadLanguageClient(filePath);
+            if (!lc) {
+                //TODO: show error page, language could not be identified
+                console.error("Language could not be identified.")
+                let sl = await page_api.languageClients.identifyLanguageId(filePath);
+                let newExtensions = [];
+                if (sl) {
+                    newExtensions.push(sl.lang_extension);
+                }
+                ev = new codemirror.EditorView({
+                    parent: div_element,
+                    doc: await value.text(),
+                    extensions: [...extArray, ...newExtensions]
+                })
+                return;
+            }
             // console.log([...extArray,  lc.plugin("file:///root"+filePath, lsp_config.lang_id)]);
             ev = new codemirror.EditorView({
                 parent: div_element,
                 doc: await value.text(),
-                extensions: [...extArray, cppLanguage, languageServerSupport(lc, "file:///root"+filePath, lsp_config.lang_id), serverCompletion()]
+                extensions: [...extArray,languageServerSupport(await lc.client, "file:///root"+filePath.substring("/user".length), lsp_config.lang_id), serverCompletion(), lc.lang_extension]
             });
         })()
         return ()=>{

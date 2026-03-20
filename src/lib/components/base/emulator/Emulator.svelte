@@ -10,7 +10,7 @@
     } from "$lib/emulator/types";
     import type { TypedEvent } from "$lib/base/events/events";
     import { usePageAPI } from "../panel/apis/PageAPI";
-    import path from "path";
+    import path from "path-browserify";
     import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
     import { getWM } from "../windows/WM";
     import { getEmulatorPort } from "$lib/emulator/emulator";
@@ -128,7 +128,7 @@
 
         let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
         let useMonaco = await editorDecision.promise;
-        resourceManager.registerScheme("file", new FileHandler(fs, useMonaco));
+        resourceManager.registerScheme("file", new FileHandler(fs, useMonaco, papi.viewModeMap));
         resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
         papi.addTerminal("serial0", {
             textEv: terminalEmitter.event,

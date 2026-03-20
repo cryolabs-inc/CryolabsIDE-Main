@@ -10,14 +10,14 @@ import { ConnectionClient } from './connection_clientv2.mts'
 import { Emitter } from "$lib/base/events";
 import { fs, fsP, saveIndex, webfs } from "$lib/base/fs";
 import type { ConnectParams, ExtensionAPI, FSDirent, FSProviderAPI, ShellAPI } from "./types";
-import px from "path";
+import px from "path-browserify";
 import { Errno, withErrno } from "kerium";
 import { getHandler } from "$lib/base/fs/p9handler";
 import type { Disposable } from "$lib/base/disposable";
 import type { FSChange } from "$lib/base/fs/changes";
 import { O_CREAT, O_EXCL, O_RDWR, O_TRUNC } from "@zenfs/core/constants.js";
-let basePath = "/";
-let vm_instance = ConstructExtendablePromise<any>();
+const basePath = "/";
+const vm_instance = ConstructExtendablePromise<any>();
 
 function getWriteTo(num: number) {
     return 'virtio-console' + num + "-input-bytes";
@@ -26,9 +26,9 @@ function getReadFrom(num: number) {
     return 'virtio-console' + num + "-output-bytes";
 }
 
-let Extendable = ConstructExtendablePromise<void>();
+const Extendable = ConstructExtendablePromise<void>();
 
-let queryParameters = new URLSearchParams(location.search);
+const queryParameters = new URLSearchParams(location.search);
 function getSrvRoot() {
 
     return new URL(basePath, location.href).href;
@@ -37,15 +37,15 @@ function receiveMsgpackMessage(emulator: any, cid: number, onMessage: (msg: Uint
 
 
 }
-let globChEmitter = new Emitter<FSChange>();
-let connection: ExtendablePromise<ConnectionClient> = ConstructExtendablePromise();
+const globChEmitter = new Emitter<FSChange>();
+const connection: ExtendablePromise<ConnectionClient> = ConstructExtendablePromise();
 interface ExtendablePromise<T> {
     promise: Promise<T>;
     Resolve(value: T): void;
 }
 function ConstructExtendablePromise<T>() {
     let R: (val: T) => void = (va) => { };
-    let prom = new Promise((resolve => {
+    const prom = new Promise((resolve => {
         R = resolve;
     }));
     return { promise: prom, Resolve: R } as ExtendablePromise<T>;
@@ -55,14 +55,14 @@ class FSProviderInternalImpl implements FSProviderAPI {
     fs9p: any;
     assignedId?: string;
     async renameEntry(oldPath: string, newPath: string): Promise<void> {
-        let newParent = px.dirname(newPath);
-        let oldParent = px.dirname(oldPath);
+        const newParent = px.dirname(newPath);
+        const oldParent = px.dirname(oldPath);
         await fsP.rename(oldPath, newPath);
         await this.emitGlobal(newParent, "rename", true);
         await this.emitGlobal(oldParent, "rename", true);
     }
     async watchForRefresh(refreshCb: (fsChange: FSChange) => void): Promise<Disposable> {
-        let d = globChEmitter.event(refreshCb);
+        const d = globChEmitter.event(refreshCb);
         return comlink.proxy({
             dispose() {
                 d.dispose();
@@ -94,14 +94,14 @@ class FSProviderInternalImpl implements FSProviderAPI {
 
     async readFile(path: string, length?: number, position?: number): Promise<Uint8Array> {
         return this.withLock(path, async () => {
-            let st = await fsP.stat(path);
+            const st = await fsP.stat(path);
             if (st.isDirectory()) {
                 throw Errno.EISDIR;
             }
-            let result = new Uint8Array(length ?? st.size);
+            const result = new Uint8Array(length ?? st.size);
 
-            let fh = await fsP.open(path, fsP.constants.O_RDWR);
-            let r = await fh.read(result, 0, result.length, position);
+            const fh = await fsP.open(path, fsP.constants.O_RDWR);
+            const r = await fh.read(result, 0, result.length, position);
             await fh.close();
             return r.buffer.subarray(0, r.bytesRead);
         });
@@ -126,9 +126,9 @@ class FSProviderInternalImpl implements FSProviderAPI {
         return this.withLock(path, async () => {
             length ??= data.byteLength;
             position ??= 0;
-            let fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT | openMode);
+            const fh = await fsP.open(path, fsP.constants.O_RDWR | fsP.constants.O_CREAT | openMode);
 
-            let { bytesWritten } = await fh.write(new Uint8Array(data), { length, position });
+            const { bytesWritten } = await fh.write(new Uint8Array(data), { length, position });
             await fh.close();
             this.emitGlobal(path, "write", isNewEntry);
 
@@ -158,7 +158,7 @@ class FSProviderInternalImpl implements FSProviderAPI {
     async createFile(path: string): Promise<void> {
         return this.withLock(path, async () => {
 
-            let fh = await fsP.open(path, O_CREAT | O_EXCL | O_RDWR);
+            const fh = await fsP.open(path, O_CREAT | O_EXCL | O_RDWR);
             await fh.writeFile(new Uint8Array(0));
             await fh.close();
             this.emitGlobal(px.dirname(path), "createFile", true);
@@ -171,9 +171,9 @@ class FSProviderInternalImpl implements FSProviderAPI {
     async ls(path: string): Promise<FSDirent[]> {
 
         return this.withLock(path, async () => {
-            let od = await fsP.opendir(path);
-            let fsd = [] as FSDirent[];
-            for await (let op of od) {
+            const od = await fsP.opendir(path);
+            const fsd = [] as FSDirent[];
+            for await (const op of od) {
                 fsd.push({
                     dt_type: op.type,
                     ino: op.ino,
@@ -256,9 +256,9 @@ class WorkerHandler implements WorkerHandlerAPI {
     }
     async connect(param: ConnectParams) {
         progressGroup.push(param.serialConsolePort);
-        let vmi = await vm_instance.promise;
+        const vmi = await vm_instance.promise;
 
-        let e: ExtensionAPI = {
+        const e: ExtensionAPI = {
             async onReadyCallback(callback) {
                 Extendable.promise.then(() => {
                     callback();
@@ -269,9 +269,9 @@ class WorkerHandler implements WorkerHandlerAPI {
                 await localforage.removeItem("disk_downloaded");
             },
             async openPtyToShell(cmd: string, args: string[]) {
-                let conn = await connection.promise;
+                const conn = await connection.promise;
 
-                let proc = await conn.start_process_pty(cmd, args);
+                const proc = await conn.start_process_pty(cmd, args);
 
                 return comlink.proxy({
 
@@ -293,9 +293,9 @@ class WorkerHandler implements WorkerHandlerAPI {
                 });
             },
             async openProcess(cmd: string, args: string[]) {
-                let conn = await connection.promise;
+                const conn = await connection.promise;
 
-                let proc = await conn.start_process(cmd, args);
+                const proc = await conn.start_process(cmd, args);
 
                 return comlink.proxy({
                     kill: async () => {
@@ -318,13 +318,13 @@ class WorkerHandler implements WorkerHandlerAPI {
         return comlink.proxy(new Connection(vmi, param.fileSystemPort, param.serialConsolePort, param.extensionApi as MessagePort));
     }
 }
-let workerHandler = new WorkerHandler();
+const workerHandler = new WorkerHandler();
 self.onmessage = (e) => {
-    let port = e.ports[0];
+    const port = e.ports[0];
     comlink.expose(workerHandler, port);
     port.start();
     if (e.data.start) {
-        let gsrvroot = () => (e.data.basePath as string) ?? getSrvRoot()
+        const gsrvroot = () => (e.data.basePath as string) ?? getSrvRoot()
         startEmulator(gsrvroot);
     }
 };
@@ -342,7 +342,7 @@ self.onmessage = (e) => {
  * @returns {Promise<void>}
  */
 async function startEmulator(getSrvRoot: () => string) {
-    let v86 = await downloadV86(getSrvRoot);
+    const v86 = await downloadV86(getSrvRoot);
     let disk_storage = null;
 
     
@@ -350,17 +350,15 @@ async function startEmulator(getSrvRoot: () => string) {
 
         console.log("Downloading disk image");
         try {
-            let r = await fetch(getSrvRoot() + 'disk');
+            const r = await fetch(getSrvRoot() + 'disk');
             if (!r.ok) {
                 throw new Error("Failed to download disk image.");
             }
-            let diskBuffer = new ArrayBuffer(parseInt(r.headers.get("Content-Length") ?? "536870912"));
-            let bytes = new Uint8Array(diskBuffer);
-            let b = r.body;
+            const b = r.body;
             if (!b) {
                 throw new Error("Could not retreive response body");
             }
-            let reader = b.getReader();
+            const reader = b.getReader();
             let off = 0;
             function onProgress(total: number, loaded: number) {
                 progressGroup.forEach(evt => {
@@ -373,20 +371,19 @@ async function startEmulator(getSrvRoot: () => string) {
             }
             await fsP.mkdir("/root", {recursive: true});
             await fsP.writeFile("/root/root.img", new Uint8Array(0));
-            let fh =await webfs.get("file", "/root/root.img");
-            let writ = await fh.createSyncAccessHandle();
+            const fh =await webfs.get("file", "/root/root.img");
+            const writ = await fh.createSyncAccessHandle();
             while (true) {
-                let ch = await reader.read();
+                const ch = await reader.read();
                 if (ch.done) {
                     //value is null
                     break;
                 }
-                bytes.set(ch.value, off);
-                onProgress(diskBuffer.byteLength, off);
+                onProgress(1*1024*1024*1024, off);
                 writ.write(ch.value, {at: off});
                 off += ch.value.length;
             }
-            let siz = writ.getSize();
+            const siz = writ.getSize();
            writ.close();
             webfs.index.get("/root/root.img")?.update({
                 size: siz
@@ -398,7 +395,7 @@ async function startEmulator(getSrvRoot: () => string) {
             // } catch { };
             await localforage.setItem("disk_downloaded", true);
         } catch (e) {
-            let message = e instanceof Error ? e.message : String(e);
+            const message = e instanceof Error ? e.message : String(e);
             console.error(message);
             progressGroup.forEach(port => {
                 port.postMessage({ type: "downloadError", message });
@@ -419,18 +416,18 @@ async function startEmulator(getSrvRoot: () => string) {
         progressGroup = [];
 
     }, 1000);
-    let uri = new URL(getSrvRoot(), location.origin);
+    const uri = new URL(getSrvRoot(), location.origin);
     uri.protocol = "http:";
-    let initArgs = [uri.href, "sdjfksjf"];
-    let initArgsB64 = initArgs.map(v => btoa(v));
-    let final = initArgsB64.join(" ");
+    const initArgs = [uri.href, "sdjfksjf"];
+    const initArgsB64 = initArgs.map(v => btoa(v));
+    const final = initArgsB64.join(" ");
     
     // let hda = disk_storage && {
     //     buffer: disk_storage,
     //     size: disk_storage.byteLength
     // };
     disk_storage = undefined;
-    let v86_startupoptions = {
+    const v86_startupoptions = {
         bios: {
             url: getSrvRoot() + "seabios.bin"
         },
@@ -471,7 +468,7 @@ async function startEmulator(getSrvRoot: () => string) {
             }
         }
     };
-    let initinstance = new v86.V86(v86_startupoptions);
+    const initinstance = new v86.V86(v86_startupoptions);
     Object.defineProperty(self, 'emulator', { value: initinstance, configurable: true, writable: true });
     // Object.defineProperty(self, 'msgLoop', {value: new MessageLoop(), configurable: true, writable: true});
     initinstance.add_listener("download-error", ({file_name: filename}: {file_name: string})=>{
@@ -482,17 +479,17 @@ async function startEmulator(getSrvRoot: () => string) {
     })
     initinstance.add_listener("emulator-ready", () => {
         vm_instance.Resolve(initinstance);
-        let readyBuf = new Uint8Array();
+        const readyBuf = new Uint8Array();
         initinstance.add_listener(getReadFrom(1), function _ref(dat: Uint8Array) {
             console.log("primed");
-            let rs = new ReadableStream<Uint8Array>({
+            const rs = new ReadableStream<Uint8Array>({
                 start(controller) {
                     initinstance.add_listener(getReadFrom(0), (dat: Uint8Array) => {
                         controller.enqueue(dat);
                     })
                 }
             });
-            let ws = new WritableStream<Uint8Array>({
+            const ws = new WritableStream<Uint8Array>({
                 write(chunk, controller) {
                     initinstance.bus.send(getWriteTo(0), chunk);
                 }
