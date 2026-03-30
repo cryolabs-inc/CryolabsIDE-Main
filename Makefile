@@ -8,4 +8,7 @@ basic-archive:
 	cd static; 7z a ../minimal-build.zip ./libv86.mjs ./v86.wasm ./seabios.bin ./vgabios.bin ./disk ./bzImage
 full-site:
 	npm run build;
-	cd build; 7z a ../full-site.zip .
+	cd build; 7z a ../full-site.zip .;
+
+site:
+	npm run build

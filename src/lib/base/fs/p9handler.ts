@@ -749,8 +749,8 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     statView.setBigUint64(89, BigInt(Math.floor(Number(st.mtimeMs))) / 1000n, true);
                     statView.setBigUint64(97, BigInt(st.mtimeMs * 1000), true);
                     // ctime_sec, ctime_nsec, btime_sec, btime_nsec
-                    statView.setBigUint64(105, BigInt(st.ctimeMs * 1000), true);
-                    statView.setBigUint64(113, BigInt(st.ctimeMs), true);
+                    statView.setBigUint64(105, BigInt(0), true);
+                    statView.setBigUint64(113, BigInt(0), true);
                     statView.setBigUint64(121, BigInt(st.birthtimeMs) / 1000n, true);
                     statView.setBigUint64(129, BigInt(st.birthtimeMs) * 1000n, true);
                     // gen, data_version

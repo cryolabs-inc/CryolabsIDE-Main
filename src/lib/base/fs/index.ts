@@ -7,6 +7,25 @@ import p from 'path-browserify';
 import { _throw } from 'utilium';
 const rot = await navigator.storage.getDirectory();
 const rootDir = await rot.getDirectoryHandle('files1', {create: true});
+type XTH<T > = T extends "file" ?
+    FileSystemFileHandle : (T extends "dir" ? FileSystemDirectoryHandle : void);
+
+class WACustom {
+    rootHandle: FileSystemDirectoryHandle;
+    constructor(rootHandle: FileSystemDirectoryHandle) {
+        this.rootHandle = rootHandle;
+    }
+    async lookupHandle<T extends "file"|"dir">(type: T, ino: number): Promise<XTH<T>> {
+        if (type === "file") {
+            this.rootHandle.getFileHandle("JKJ.txt", {
+                create: true
+            });
+        }
+    } 
+    async accessInode(ino: number): Promise<Inode> {
+        this.lookupHandle("file")
+    }
+}
 class WebAccess2 extends WebAccessFS {
     idxHandle: FileSystemFileHandle;
     gettingIdx: boolean = false;

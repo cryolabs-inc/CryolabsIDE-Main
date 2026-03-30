@@ -16,7 +16,7 @@
     import { getEmulatorPort } from "$lib/emulator/emulator";
     import StreamTerminalView from "$lib/base/resource/viewers/StreamTerminalView.svelte";
     import { add_langs } from "$lib/base/monaco";
-    let { onResize, basePath}: { onResize: TypedEvent<void>, basePath: string} = $props();
+    let { onResize, basePath, emulatorConfig}: { onResize: TypedEvent<void>, basePath: string, emulatorConfig?: Record<string, any>} = $props();
     const resourceManager = getResourceManager();
 
     const papi = usePageAPI();
@@ -57,7 +57,7 @@
     let wm = getWM();
     onMount(async () => {
         let terminalEmitter = new Emitter<string>();
-        let api = comlink.wrap(await getEmulatorPort(basePath)) as WorkerHandlerAPI;
+        let api = comlink.wrap(await getEmulatorPort(basePath, emulatorConfig)) as WorkerHandlerAPI;
         let serialPort = new MessageChannel();
         let downloadNotif: ReturnType<typeof papi.statusBar.addNotification> | undefined;
 
@@ -128,7 +128,8 @@
 
         let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
         let useMonaco = await editorDecision.promise;
-        resourceManager.registerScheme("file", new FileHandler(fs, useMonaco, papi.viewModeMap));
+        resourceManager.registerScheme("file", new FileHandler(fs, useMonaco, 
+            papi.viewModeMap, papi.fsExtensionMap));
         resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
         papi.addTerminal("serial0", {
             textEv: terminalEmitter.event,

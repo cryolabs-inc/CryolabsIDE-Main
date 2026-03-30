@@ -325,7 +325,7 @@ self.onmessage = (e) => {
     port.start();
     if (e.data.start) {
         const gsrvroot = () => (e.data.basePath as string) ?? getSrvRoot()
-        startEmulator(gsrvroot);
+        startEmulator(gsrvroot, e.data.emulatorConfig);
     }
 };
 /**
@@ -341,7 +341,7 @@ self.onmessage = (e) => {
  * @param getSrvRoot Gets the server root through a function. May be customized if CDN or some other source is used.
  * @returns {Promise<void>}
  */
-async function startEmulator(getSrvRoot: () => string) {
+async function startEmulator(getSrvRoot: () => string, emulatorConfig?: Record<string, any>) {
     const v86 = await downloadV86(getSrvRoot);
     let disk_storage = null;
 
@@ -440,9 +440,9 @@ async function startEmulator(getSrvRoot: () => string) {
         },
         // },
         // hda,
-        cmdline: `console=ttyS0`,
+        cmdline: `console=ttyS0 tsc=reliable`,
         wasm_path: `${getSrvRoot()}v86.wasm`,
-        memory_size: 1024 * 1024 * 256,
+        memory_size: 1024 * 1024 * 512,
         disable_keyboard: true,
         disable_mouse: true,
         virtio_console: true,
@@ -468,7 +468,7 @@ async function startEmulator(getSrvRoot: () => string) {
             }
         }
     };
-    const initinstance = new v86.V86(v86_startupoptions);
+    const initinstance = new v86.V86({...v86_startupoptions, ...emulatorConfig});
     Object.defineProperty(self, 'emulator', { value: initinstance, configurable: true, writable: true });
     // Object.defineProperty(self, 'msgLoop', {value: new MessageLoop(), configurable: true, writable: true});
     initinstance.add_listener("download-error", ({file_name: filename}: {file_name: string})=>{

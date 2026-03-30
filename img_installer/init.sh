@@ -13,7 +13,9 @@ ls /mnt
 mkdir /mnt/root
 if [ -e /dev/sda ]
 then
-    dd if=/dev/sda of=/mnt/root/root.img bs=5M status=progress
+    echo err
+    exit 0
+    # dd if=/dev/sda of=/mnt/root/root.img bs=5M status=progress
 fi
 mkdir /newroot
 ls /mnt/root/root.img
@@ -25,6 +27,8 @@ mount -t ext4 /mnt/root/root.img /newroot
 mount --bind /mnt/user /newroot/root
 mount --bind /mnt/root /newroot/mnt
 chmod +x /mnt/root/index.sh
+export force_color_prompt=yes
+echo "force_color_prompt='yes'" > /newroot/etc/environment
 exec switch_root  /newroot /custom-init
 # check if /mnt has the root FS 
 exit 0

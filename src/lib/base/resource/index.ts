@@ -274,8 +274,12 @@ export class FileHandler extends SimpleResourceHandler {
     fsAPI: FSProviderAPI;
     forceMonaco: boolean;
     viewModes: Map<string, ViewmodeCallback> = new Map();
-    constructor(fileSystemAPI: FSProviderAPI, forceMonaco = false, viewModeMap: Map<string, ViewmodeCallback>=new Map()) {
+    extensionModeMap: [RegExp, ViewmodeCallback][] = [];
+    constructor(fileSystemAPI: FSProviderAPI, forceMonaco = false
+        , viewModeMap: Map<string, ViewmodeCallback>=new Map()
+        , extModeMap:  [RegExp, ViewmodeCallback][] = []) {
         super();
+        this.extensionModeMap = extModeMap;
         this.fsAPI = fileSystemAPI;
         this.forceMonaco = forceMonaco;
         this.viewModes = viewModeMap;
@@ -292,6 +296,16 @@ export class FileHandler extends SimpleResourceHandler {
                 await fsP.writeFile(filePath, newC.buffer as ArrayBuffer, newC.length, 0, O_TRUNC);
                 await fsP.truncate(filePath, newC.byteLength);
             };
+            for (let [regEx, callback] of this.extensionModeMap) {
+                if (regEx.test(filePath)) {
+                    const ret = callback(request);
+                    if (ret) {
+                        return ret;
+                    } else {
+                        break;
+                    }
+                }
+            }
             let searchParams = new URL(request.url).searchParams;
             if (searchParams.has("viewMode")) {
                 let viewMode = searchParams.get('viewMode')!;

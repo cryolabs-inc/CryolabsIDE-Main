@@ -1,7 +1,6 @@
 #!/sbin/openrc-run
 
 depend() {
-    need localmount net
     before agetty.ttyS0
 }
 

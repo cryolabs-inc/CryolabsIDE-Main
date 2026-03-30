@@ -2,7 +2,7 @@ import SW from './shared_worker?sharedworker';
 import E from './emulator_worker?worker';
 import type { Msg, WorkerMessageData } from './types';
 let singletonWorker: Worker|undefined = undefined;
-export const getEmulatorPort = function (basePath: string) {
+export const getEmulatorPort = function (basePath: string, emulatorConfig?: Record<string, any>) {
     return new Promise<MessagePort>((resolve) => {
         const s = new SW({
             name: "swa"
@@ -25,7 +25,7 @@ export const getEmulatorPort = function (basePath: string) {
                         });
                         data.msgPort.addEventListener('message', (e)=>{
                             if (e.data.type === "GetWorkerPortRequest") {
-                                singletonWorker?.postMessage({start: false, basePath}, [e.ports[0]]);
+                                singletonWorker?.postMessage({start: false, basePath, emulatorConfig}, [e.ports[0]]);
                                 data.msgPort.postMessage({"type": "GetWorkerPortResponse", id: e.data.id});
                                 return;
                             }
@@ -43,7 +43,7 @@ export const getEmulatorPort = function (basePath: string) {
                         })
                         const mc = new MessageChannel();
 
-                        wa.postMessage({start: true, basePath}, [mc.port1]);
+                        wa.postMessage({start: true, basePath, emulatorConfig}, [mc.port1]);
                         resolve(mc.port2);
                     }
                     else {

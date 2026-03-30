@@ -275,6 +275,10 @@ export class PageAPI {
     }
     dialogManager: DialogManager | null = null;
     viewModeMap: Map<string, ViewmodeCallback> = new Map();
+    fsExtensionMap: [RegExp, ViewmodeCallback][] = [];
+    addFSExtension(fsExtension: [RegExp, ViewmodeCallback]) {
+        this.fsExtensionMap.push(fsExtension);
+    }
     registerViewMode(viewMode: string, callback: ViewmodeCallback): Disposable {
         this.viewModeMap.set(viewMode, callback);
         return {

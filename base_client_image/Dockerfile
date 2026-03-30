@@ -1,7 +1,15 @@
-FROM --platform=i386 i386/alpine:3.22.0
-RUN apk update
-RUN apk add linux-virt gcc g++ coreutils \
- python3 binutils openrc util-linux openrc-init \
-libstdc++ libc-dev nano vim strace bash shadow clang-extra-tools valgrind 
+FROM --platform=i386 i386/debian:12.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    openrc \
+    sysvinit-core \
+    gcc \
+    g++ \
+    clang \
+    clangd \
+    python3 strace libmimalloc2.0 libjemalloc2 vmtouch curl iproute2 udhcpc gnupg gpgv && rm -rf /var/lib/apt/lists/*
+
 
 CMD ["/bin/sh"]
