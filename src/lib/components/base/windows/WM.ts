@@ -12,10 +12,10 @@ export class WM {
         const EDGE = 6;
         type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | '';
         function getEdge(e: MouseEvent): Edge {
-            let r = draggableDiv.getBoundingClientRect();
-            let x = e.clientX - r.left, y = e.clientY - r.top;
-            let n = y < EDGE, s = y > r.height - EDGE;
-            let w = x < EDGE, east = x > r.width - EDGE;
+            const r = draggableDiv.getBoundingClientRect();
+            const x = e.clientX - r.left, y = e.clientY - r.top;
+            const n = y < EDGE, s = y > r.height - EDGE;
+            const w = x < EDGE, east = x > r.width - EDGE;
             if (n && w) return 'nw'; if (n && east) return 'ne';
             if (s && w) return 'sw'; if (s && east) return 'se';
             if (n) return 'n'; if (s) return 's';
@@ -31,21 +31,21 @@ export class WM {
                 draggableDiv.style.cursor = '';
                 return;
             }
-            let edge = getEdge(e);
+            const edge = getEdge(e);
             draggableDiv.style.cursor = cursorMap[edge] || '';
         });
         draggableDiv.addEventListener('mousedown', (e) => {
             if ((e.target as HTMLElement) !== draggableDiv) return;
-            let edge = getEdge(e);
+            const edge = getEdge(e);
             if (!edge) return;
             e.preventDefault();
             e.stopPropagation();
-            let startX = e.clientX, startY = e.clientY;
-            let rect = draggableDiv.getBoundingClientRect();
-            let startW = rect.width, startH = rect.height;
-            let startL = rect.left, startT = rect.top;
+            const startX = e.clientX, startY = e.clientY;
+            const rect = draggableDiv.getBoundingClientRect();
+            const startW = rect.width, startH = rect.height;
+            const startL = rect.left, startT = rect.top;
             function onMouseMove(e: MouseEvent) {
-                let dx = e.clientX - startX, dy = e.clientY - startY;
+                const dx = e.clientX - startX, dy = e.clientY - startY;
                 if (edge.includes('e')) draggableDiv.style.width = `${startW + dx}px`;
                 if (edge.includes('w')) { draggableDiv.style.width = `${startW - dx}px`; draggableDiv.style.left = `${startL + dx}px`; }
                 if (edge.includes('s')) draggableDiv.style.height = `${startH + dy}px`;
@@ -64,10 +64,10 @@ export class WM {
     }
     makeDraggable(draggableDiv: HTMLDivElement, handle: HTMLDivElement = draggableDiv, delay: number=0) {
         handle.onmousedown = (startEvent) => {
-            let domRect = draggableDiv.getBoundingClientRect();
-            let offsetX = startEvent.clientX - domRect.left;
-            let offsetY = startEvent.clientY - domRect.top;
-            let id = setTimeout(() => {
+            const domRect = draggableDiv.getBoundingClientRect();
+            const offsetX = startEvent.clientX - domRect.left;
+            const offsetY = startEvent.clientY - domRect.top;
+            const id = setTimeout(() => {
                 function onMouseMove(e: MouseEvent) {
                     draggableDiv.style.left = `${e.clientX - offsetX}px`;
                     draggableDiv.style.top = `${e.clientY - offsetY}px`;
@@ -88,8 +88,8 @@ export class WM {
             }
         }
     }
-    constructor() {
-        let d = document.createElement('div');
+    constructor(showGrapple = true) {
+        const d = document.createElement('div');
         d.style.display = "flex";
         d.style.flexDirection = "row-reverse";
         d.style.gap = "20pt";
@@ -97,13 +97,16 @@ export class WM {
         d.style.position = "absolute";
         d.style.top = "90vh"
         d.classList.add('bg-accent');
-        let dragHandle = document.createElement('div');
+        const dragHandle = document.createElement('div');
         dragHandle.style.display = "block";
         mount(GripIcon, { target: dragHandle });
         d.appendChild(dragHandle);
         this.rootElement.appendChild(d);
         this.minimizedWindowElement = d;
         this.makeDraggable(d, dragHandle);
+        if (!showGrapple) {
+            d.style.display = "none";
+        }
 
     }
     launchWindow(url: string, { contexts, openMode, ...rest }: {
@@ -113,11 +116,11 @@ export class WM {
             X: number, Y: number
         }
     } = { openMode: "default" }) {
-        let draggableDiv = document.createElement('div');
+        const draggableDiv = document.createElement('div');
         contexts ??= this.contexts;
-        let thiz = this;
+        const thiz = this;
         let isMaximized = false;
-        let savedRect = { left: '', top: '', width: '', height: '' };
+        const savedRect = { left: '', top: '', width: '', height: '' };
         function maximize() {
             draggableDiv.classList.add('maximizing');
             draggableDiv.addEventListener('animationend', (e) => {
@@ -143,7 +146,7 @@ export class WM {
             }
             isMaximized = !isMaximized;
         }
-        let px = mount(Window, {
+        const px = mount(Window, {
             props: {
                 "showAddressBar": false,
                 showTabs: false,
@@ -158,7 +161,7 @@ export class WM {
                 },
                 async minimize() {
                     draggableDiv.classList.add("minimizing");
-                    let px = document.createElement('button');
+                    const px = document.createElement('button');
                     px.innerHTML = "1";
                     thiz.minimizedWindowElement.appendChild(px);
                     px.onclick = (e) => {
@@ -193,7 +196,7 @@ export class WM {
         this.makeResizable(draggableDiv);
         this.makeDraggable(draggableDiv, draggableDiv.querySelector('.toolbar-win') as HTMLDivElement, 100);
         draggableDiv.style.position = "absolute";
-        draggableDiv.style.zIndex = "99999";
+        draggableDiv.style.zIndex = "5000";
         draggableDiv.style.left = `${initX}px`;
         draggableDiv.style.top = `${initY}px`;
         draggableDiv.style.border = "2px solid var(--accent)";

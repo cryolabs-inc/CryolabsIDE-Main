@@ -7,8 +7,8 @@ import { Emitter } from "../base/events";
 const Marshall = function (types: string[], data: any[], little_endian = false): [Uint8Array, number] {
     let buffer_size = 0;
     for (let i = 0; i < types.length; i++) {
-        let dat = data[i];
-        let type = types[i];
+        const dat = data[i];
+        const type = types[i];
         switch (type) {
             case "s":
                 buffer_size += (2 + dat.length);
@@ -33,18 +33,18 @@ const Marshall = function (types: string[], data: any[], little_endian = false):
                 break;
         }
     };
-    let result = new Uint8Array(buffer_size);
-    let dv = new DataView(result.buffer);
+    const result = new Uint8Array(buffer_size);
+    const dv = new DataView(result.buffer);
     let buffer_cursor = 0;
-    let texten = new TextEncoder();
+    const texten = new TextEncoder();
     for (let i = 0; i < types.length; i++) {
-        let dat = data[i];
-        let type = types[i];
+        const dat = data[i];
+        const type = types[i];
         switch (type) {
             case "s": {
                 dv.setUint16(buffer_cursor, dat.length, little_endian);
                 buffer_cursor += 2;
-                let encoded = texten.encode(dat);
+                const encoded = texten.encode(dat);
                 result.set(encoded, buffer_cursor);
                 buffer_cursor += encoded.length;
                 break;
@@ -70,7 +70,7 @@ const Marshall = function (types: string[], data: any[], little_endian = false):
                 break;
             }
             case "typed_array": {
-                let ua = new Uint8Array(dat.buffer, dat.byteOffset, dat.byteLength);
+                const ua = new Uint8Array(dat.buffer, dat.byteOffset, dat.byteLength);
                 result.set(ua, buffer_cursor);
                 buffer_cursor += dat.byteLength;
                 break;
@@ -87,7 +87,7 @@ const Marshall = function (types: string[], data: any[], little_endian = false):
 }
 function create_duplex_web_stream() {
 
-    let { readable, writable } = new TransformStream<Uint8Array, Uint8Array>({
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
             controller.enqueue(chunk);
             
@@ -102,9 +102,9 @@ function create_duplex_web_stream() {
  */
 const Unmarshall = function (types: string | Array<string | string[]>, buffer: Uint8Array, little_endian = false) {
     let buffer_cursor = 0;
-    let dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    let textdec = new TextDecoder();
-    let output = [];
+    const dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const textdec = new TextDecoder();
+    const output = [];
     for (let i = 0; i < types.length; i++) {
 
         let t = types[i];
@@ -117,7 +117,7 @@ const Unmarshall = function (types: string | Array<string | string[]>, buffer: U
 
         switch (t) {
             case "s": {
-                let string_length = dv.getUint16(buffer_cursor, little_endian);
+                const string_length = dv.getUint16(buffer_cursor, little_endian);
                 buffer_cursor += 2;
                 output.push(textdec.decode(buffer.slice(buffer_cursor, buffer_cursor + string_length)));
                 break;
@@ -145,7 +145,7 @@ const Unmarshall = function (types: string | Array<string | string[]>, buffer: U
                 if (!parameters) {
                     throw new Error("no parameters passed");
                 }
-                let data_len = (parameters[0]) as any;
+                const data_len = (parameters[0]) as any;
                 output.push(buffer.slice(buffer_cursor, buffer_cursor + data_len));
                 buffer_cursor += data_len;
                 break;
@@ -214,7 +214,7 @@ export class ConnectionClient {
     get_stream(fid: number): { readable: ReadableStream<Uint8Array>, writer: WritableStreamDefaultWriter<Uint8Array> } {
         let entry = this.stream_map.get(fid);
         if (!entry) {
-            let { readable, writable } = create_duplex_web_stream();
+            const { readable, writable } = create_duplex_web_stream();
             entry = { readable, writer: writable.getWriter() };
             this.stream_map.set(fid, entry);
         }
@@ -229,7 +229,7 @@ export class ConnectionClient {
     async get_to_stream(fid: number): Promise<DuplexStreamPair> {
         let entry = this.stream_map_to.get(fid);
         if (!entry) {
-            let { readable, writable } = create_duplex_web_stream();
+            const { readable, writable } = create_duplex_web_stream();
             entry = {
                 readable: readable,
                 writable: writable
@@ -246,22 +246,22 @@ export class ConnectionClient {
      */
     async start_read_loop_for(stream: ReadableStream, fid: number) {
         
-        let rdr = stream.getReader();
+        const rdr = stream.getReader();
         while (true) {
-            let { done, value } = await rdr.read();
+            const { done, value } = await rdr.read();
             if (done || !value) {
                 break;
             }
-            let [payload] = Marshall(["u32", "typed_array"], [fid, value]);
+            const [payload] = Marshall(["u32", "typed_array"], [fid, value]);
             this._send_msg(ConnectionMethods.Frame, payload, 0);
         }
         this._send_msg(ConnectionMethods.PipeClosed, Marshall(["u32"], [fid])[0], 0);
     }
 
     async frame_msg_handler(data: Uint8Array) {
-        let dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        let fid = dv.getUint32(0);
-        let entry = this.get_stream(fid);
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const fid = dv.getUint32(0);
+        const entry = this.get_stream(fid);
         try {
             await entry.writer.write(data.subarray(4));
         } catch { }
@@ -271,19 +271,19 @@ export class ConnectionClient {
         let buf = new Uint8Array();
         while (true) {
 
-            let { done, value } = await this.readable.read();
+            const { done, value } = await this.readable.read();
             if (done || !value) {
                 break;
             }
-            let temp_buf = value;
-            let old_buf_length = buf.length;
-            let old_buf = buf;
+            const temp_buf = value;
+            const old_buf_length = buf.length;
+            const old_buf = buf;
 
             buf = new Uint8Array(buf.length + temp_buf.length);
             buf.set(old_buf, 0);
             buf.set(temp_buf, old_buf_length);
             while (true) {
-                let c = await this.read_message(buf);
+                const c = await this.read_message(buf);
                 if (c === -1) {
                     break;
                 }
@@ -296,14 +296,14 @@ export class ConnectionClient {
         if (buffer.byteLength < 4) {
             return -1;
         }
-        let dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        let msg_len = dv.getUint32(0);
+        const dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        const msg_len = dv.getUint32(0);
         
         if (msg_len > buffer.byteLength) {
             return -1;
         }
-        let msg_id = dv.getUint32(4);
-        let msg_method = dv.getUint8(8);
+        const msg_id = dv.getUint32(4);
+        const msg_method = dv.getUint8(8);
 
         if (msg_id === 0) {
             if (msg_method === ConnectionMethods.Frame) {
@@ -311,9 +311,9 @@ export class ConnectionClient {
                 return msg_len;
             }
             if (msg_method === ConnectionMethods.KillProcessResponse) {
-                let dv = new DataView(buffer.buffer, buffer.byteOffset + 9);
-                let pid = dv.getUint32(0);
-                let exit_code = dv.getUint32(4);
+                const dv = new DataView(buffer.buffer, buffer.byteOffset + 9);
+                const pid = dv.getUint32(0);
+                const exit_code = dv.getUint32(4);
                 this.pid_exitcodes.set(pid, exit_code);
                 let x;
                 if (x = this.pid_waiters.get(pid)) {
@@ -322,9 +322,9 @@ export class ConnectionClient {
                 this.pid_waiters.set(pid, []);
             }
             if (msg_method === ConnectionMethods.PipeClosed) {
-                let dv = new DataView(buffer.slice(9).buffer);
-                let fid = dv.getUint32(0);
-                let entry = this.stream_map.get(fid);
+                const dv = new DataView(buffer.slice(9).buffer);
+                const fid = dv.getUint32(0);
+                const entry = this.stream_map.get(fid);
                 if (entry) {
                     try { entry.writer.close(); } catch { }
                 }
@@ -332,7 +332,7 @@ export class ConnectionClient {
                 this.stream_map_to.delete(fid);
             }
         }
-        let val = this.handler_map.get(msg_id);
+        const val = this.handler_map.get(msg_id);
         if (val)
             val(buffer.subarray(9, msg_len));
 
@@ -340,8 +340,8 @@ export class ConnectionClient {
     }
 
     async _send_msg(method: number, payload: Uint8Array, request_id = this.nextMsgId()) {
-        let total_length = 4 + 4 + 1 + payload.byteLength;
-        let dv = new DataView(new ArrayBuffer(total_length));
+        const total_length = 4 + 4 + 1 + payload.byteLength;
+        const dv = new DataView(new ArrayBuffer(total_length));
         dv.setUint32(0, total_length);
         dv.setUint32(4, request_id);
         dv.setUint8(8, method);
@@ -361,40 +361,40 @@ export class ConnectionClient {
 
     get_waiter_entry(pfid: number) {
         if (!this.pid_waiters.has(pfid)) {
-            let res = ([]) as ((exit_code: number) => void)[];
+            const res = ([]) as ((exit_code: number) => void)[];
             this.pid_waiters.set(pfid, res);
             return res;
         };
-        let res = this.pid_waiters.get(pfid);
+        const res = this.pid_waiters.get(pfid);
         if (!res)
             throw new Error("unreachable");
         return res;
     }
 
     async kill_process(pfid: number) {
-        let [payload] = Marshall(["u32"], [pfid]);
-        let resp = await this._send_msg(ConnectionMethods.KillProcess, payload);
-        let [exit_code] = Unmarshall(["u32"], resp);
+        const [payload] = Marshall(["u32"], [pfid]);
+        const resp = await this._send_msg(ConnectionMethods.KillProcess, payload);
+        const [exit_code] = Unmarshall(["u32"], resp);
         this.pid_exitcodes.set(pfid, (exit_code as number));
         return exit_code as number;
     }
 
     async start_process_pty(process_path: string, process_args: string[] = []) {
-        let inTypes = ["s", "u32", ...process_args.map(_ => "s"), "u32", "u32"];
-        let ptyFid = this.nextFid();
-        let procFid = this.nextFid();
-        let inData = [process_path, process_args.length, ...process_args, ptyFid, procFid];
-        let [payload] = Marshall(inTypes, inData, false);
-        let resp = await this._send_msg(ConnectionMethods.StartProcessPty, payload);
+        const inTypes = ["s", "u32", ...process_args.map(_ => "s"), "u32", "u32"];
+        const ptyFid = this.nextFid();
+        const procFid = this.nextFid();
+        const inData = [process_path, process_args.length, ...process_args, ptyFid, procFid];
+        const [payload] = Marshall(inTypes, inData, false);
+        const resp = await this._send_msg(ConnectionMethods.StartProcessPty, payload);
 
-        let { readable } = this.get_stream(ptyFid);
-        let { writable } = await this.get_to_stream(ptyFid);
+        const { readable } = this.get_stream(ptyFid);
+        const { writable } = await this.get_to_stream(ptyFid);
 
         return {
             pty_stream_reader: readable,
             pty_stream_writer: writable,
             resize: async (cols: number, rows: number) => {
-                let [payload] = Marshall(["u32", "u16", "u16"], [ptyFid, cols, rows]);
+                const [payload] = Marshall(["u32", "u16", "u16"], [ptyFid, cols, rows]);
                 this._send_msg(ConnectionMethods.ResizePty, payload, 0);
             },
             wait: async () => {
@@ -414,19 +414,19 @@ export class ConnectionClient {
     }
 
     async start_process(process_path: string, process_args: string[] = []) {
-        let inTypes = ["s", "u32", ...process_args.map(_ => "s"), "u32", "u32", "u32", "u32"];
-        let stdinFid = this.nextFid();
-        let stderrFid = this.nextFid();
-        let stdoutFid = this.nextFid();
-        let procFid = this.nextFid();
-        let inData = [process_path, process_args.length, ...process_args, stdinFid, stderrFid, stdoutFid, procFid];
+        const inTypes = ["s", "u32", ...process_args.map(_ => "s"), "u32", "u32", "u32", "u32"];
+        const stdinFid = this.nextFid();
+        const stderrFid = this.nextFid();
+        const stdoutFid = this.nextFid();
+        const procFid = this.nextFid();
+        const inData = [process_path, process_args.length, ...process_args, stdinFid, stderrFid, stdoutFid, procFid];
 
-        let [payload] = Marshall(inTypes, inData, false);
+        const [payload] = Marshall(inTypes, inData, false);
         await this._send_msg(ConnectionMethods.StartProcess, payload);
 
-        let stdout_stream = this.get_stream(stdoutFid);
-        let stderr_stream = this.get_stream(stderrFid);
-        let stdin_stream = await this.get_to_stream(stdinFid);
+        const stdout_stream = this.get_stream(stdoutFid);
+        const stderr_stream = this.get_stream(stderrFid);
+        const stdin_stream = await this.get_to_stream(stdinFid);
 
         return {
             stdout_stream: stdout_stream.readable,

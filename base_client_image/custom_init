@@ -1,7 +1,6 @@
 #!/sbin/openrc-run
 
 depend() {
-    need localmount net
     before agetty.ttyS0
 }
 
@@ -11,9 +10,8 @@ start() {
     mkdir /dev/pts
     mount -t devpts /dev/pts /dev/pts
     mount -t 9p -o cache=none,directio host9p /root
+    mount -t tmpfs /tmp /tmp
     (cd /root && HOME=/root mu ) &
-    sleep 0.03
-    echo h > /dev/hvc1
     udhcpc
     sleep 0.75
     eend 0

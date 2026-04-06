@@ -1,8 +1,9 @@
 import type { FSProviderAPI } from "$lib/emulator/types";
 import type { AutocompleteProvider, AutocompleteSuggestion } from "$lib/base/dialog/DialogManager";
+import { Emitter } from "$lib/base/events";
 import { S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
 import { Octokit } from 'octokit';
-import p from "path";
+import p from "path-browserify";
 import Buffer from 'buffer';
 interface Ghctx {
     kit: Octokit;
@@ -20,10 +21,10 @@ interface GtreeEntry {
 }
 
 async function ct(ghCtx: Ghctx, fs: FSProviderAPI, path: string) {
-    let fstat = await fs.stat(path);
-    let isDirectory = (fstat.mode & S_IFMT) === S_IFDIR;
-    let { kit } = ghCtx;
-    let currentElement = {
+    const fstat = await fs.stat(path);
+    const isDirectory = (fstat.mode & S_IFMT) === S_IFDIR;
+    const { kit } = ghCtx;
+    const currentElement = {
         path: p.basename(path),
         mode: isDirectory ? "040000" : "100644",
         type: isDirectory ? "tree" : "blob",
@@ -32,12 +33,12 @@ async function ct(ghCtx: Ghctx, fs: FSProviderAPI, path: string) {
     } as GtreeEntry;
     if (isDirectory) {
         // get the sha file;
-        let theTree = await craftTree(ghCtx, ct, path);
-        let reqObject = {
+        const theTree = await craftTree(ghCtx, ct, path);
+        const reqObject = {
             tree: theTree
         };
         // let r = await githubApiRequest(ghCtx.ghApiToken, 'POST', `/repos/${ghCtx.owner}/${ghCtx.repo}/git/trees`, reqObject);
-        let r = await kit.request("POST /repos/{owner}/{repo}/git/trees", {
+        const r = await kit.request("POST /repos/{owner}/{repo}/git/trees", {
             owner: ghCtx.username,
             repo: ghCtx.reponame,
             ...reqObject
@@ -45,10 +46,10 @@ async function ct(ghCtx: Ghctx, fs: FSProviderAPI, path: string) {
         currentElement.sha = r.data.sha;
     }
     else {
-        let d = await fs.readLargeFile(path);
-        let ab = await d.arrayBuffer();
-        let b = Buffer.Buffer.from(ab).toString('base64');
-        let bsha = await kit.request("POST /repos/{owner}/{repo}/git/blobs", {
+        const d = await fs.readLargeFile(path);
+        const ab = await d.arrayBuffer();
+        const b = Buffer.Buffer.from(ab).toString('base64');
+        const bsha = await kit.request("POST /repos/{owner}/{repo}/git/blobs", {
             owner: ghCtx.username,
             repo: ghCtx.reponame,
             content: b,
@@ -67,10 +68,10 @@ async function ct(ghCtx: Ghctx, fs: FSProviderAPI, path: string) {
  */
 async function craftTree(gitCtx: Ghctx, cb: (gitCtx: Ghctx, fs: FSProviderAPI, path: string) => Promise<GtreeEntry> | GtreeEntry, path = gitCtx.rootPath, o = [] as GtreeEntry[]) {
 
-    let arr = await gitCtx.fs.readdir(path);
+    const arr = await gitCtx.fs.readdir(path);
 
-    for (let s of arr) {
-        o.push(await cb(gitCtx, gitCtx.fs, p.resolve(path, s)));
+    for (const s of arr) {
+        o.push(await cb(gitCtx, gitCtx.fs, p.join(path, s)));
 
     }
     return o;
@@ -82,7 +83,7 @@ export class SrcControlGit {
     repo: string | null = null;
     owner: string | null = null;
     static async fromPat(fs: FSProviderAPI, pat: string) {
-        let scgit = new SrcControlGit(fs);
+        const scgit = new SrcControlGit(fs);
         scgit.octokit = new Octokit({
             auth: pat
         });
@@ -102,11 +103,23 @@ export class SrcControlGit {
             return false;
         }
     }
+    async getLogin(): Promise<string | null> {
+        if (!this.octokit) return null;
+        try {
+            const { data } = await this.octokit.rest.users.getAuthenticated();
+            return data.login;
+        } catch {
+            return null;
+        }
+    }
+    repoChangeEmitter?: Emitter<{ owner: string; repo: string }>;
     setRepo(repo: string) {
         this.repo = repo;
+        if (this.owner && this.repo) this.repoChangeEmitter?.emit({ owner: this.owner, repo: this.repo });
     }
     setOwner(owner: string) {
         this.owner = owner;
+        if (this.owner && this.repo) this.repoChangeEmitter?.emit({ owner: this.owner, repo: this.repo });
     }
     constructor(fs: FSProviderAPI) {
         this.fs = fs;
@@ -124,23 +137,23 @@ export class SrcControlGit {
         };
     }
     async push(path: string, branch: string = "main", message: string = "No message entered") {
-        let gctx = this.getGitCtx(path);
-        let { kit } = gctx;
-        let rootTree = await ct(gctx, this.fs, path);
+        const gctx = this.getGitCtx(path);
+        const { kit } = gctx;
+        const rootTree = await ct(gctx, this.fs, path);
         if (!rootTree.sha) {
             throw new Error("SHA failed to commit.");
         }
-        let refData = await kit.rest.git.getRef({
+        const refData = await kit.rest.git.getRef({
             repo: gctx.reponame,
             owner: gctx.username,
             ref: "heads/" + branch
 
         });
 
-        let nwCom = await kit.rest.git.createCommit({
+        const nwCom = await kit.rest.git.createCommit({
             owner: gctx.username,
             repo: gctx.reponame,
-            message: "Test",
+            message,
             tree: rootTree.sha,
             parents: [refData.data.object.sha]
         });
@@ -154,25 +167,25 @@ export class SrcControlGit {
     }
     async pull(path: string, branch: string = "main", commitSha?: string, confirm?: (title: string, message: string) => Promise<boolean>) {
         if (confirm) {
-            let ok = await confirm("Pull from remote?", "Any unpushed local changes will be lost. Do you want to continue?");
+            const ok = await confirm("Pull from remote?", "Any unpushed local changes will be lost. Do you want to continue?");
             if (!ok) return;
         }
 
-        let gctx = this.getGitCtx(path);
-        let { kit, reponame: repo, username: owner } = gctx;
-        let r = await kit.rest.git.getRef({
+        const gctx = this.getGitCtx(path);
+        const { kit, reponame: repo, username: owner } = gctx;
+        const r = await kit.rest.git.getRef({
             repo,
             owner,
             ref: "heads/" + branch
         });
-        let sha = commitSha ?? r.data.object.sha;
-        let commit = await kit.rest.git.getCommit({
+        const sha = commitSha ?? r.data.object.sha;
+        const commit = await kit.rest.git.getCommit({
             commit_sha: sha,
             repo,
             owner
         });
-        let ctree = commit.data.tree.sha;
-        let t = await kit.rest.git.getTree({
+        const ctree = commit.data.tree.sha;
+        const t = await kit.rest.git.getTree({
             owner,
             repo,
             tree_sha: ctree,
@@ -180,22 +193,14 @@ export class SrcControlGit {
         });
 
         // Delete existing contents to prevent stale files
-        let existing = await this.fs.readdir(path);
-        for (let entry of existing) {
-            let fullPath = p.resolve(path, entry);
-            try {
-                await this.fs.removeDirectory(fullPath, { recursive: true });
-            } catch {
-                try {
-                    await this.fs.removeEntry(fullPath);
-                } catch { }
-            }
-        }
-
+        try {
+        await this.fs.removeDirectory(path, {recursive: true});
+        } catch {}
+await this.fs.mkdir(path, {recursive: true});
         // Create directories first
-        for (let it of t.data.tree) {
+        for (const it of t.data.tree) {
             if (it.type === "tree" && it.path) {
-                let fullPath = p.resolve(path, it.path);
+                const fullPath = p.join(path, it.path);
                 try {
                     await this.fs.mkdir(fullPath, { recursive: true });
                 } catch { }
@@ -203,23 +208,23 @@ export class SrcControlGit {
         }
 
         // Then write blobs
-        for (let it of t.data.tree) {
+        for (const it of t.data.tree) {
             if (it.type === "blob" && it.path && it.sha) {
-                let fullPath = p.resolve(path, it.path);
+                const fullPath = p.join(path, it.path);
                 // Ensure parent directory exists
-                let parentDir = p.dirname(fullPath);
+                const parentDir = p.dirname(fullPath);
                 try {
                     await this.fs.mkdir(parentDir, { recursive: true });
                 } catch { }
 
-                let blob = await kit.rest.git.getBlob({
+                const blob = await kit.rest.git.getBlob({
                     owner,
                     repo,
                     file_sha: it.sha
                 });
                 let content: Uint8Array;
                 if (blob.data.encoding === "base64") {
-                    let binary = atob(blob.data.content);
+                    const binary = atob(blob.data.content);
                     content = new Uint8Array(binary.length);
                     for (let i = 0; i < binary.length; i++) {
                         content[i] = binary.charCodeAt(i);

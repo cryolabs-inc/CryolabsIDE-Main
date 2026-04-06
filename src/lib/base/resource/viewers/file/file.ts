@@ -5,12 +5,12 @@ import type { FSProviderAPI } from "$lib/emulator/types";
 import { Download, DownloadIcon, FileIcon, FilePlusIcon, FolderPlusIcon, TrashIcon } from "@lucide/svelte";
 import { O_EXCL, S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
 import { DirType } from "@zenfs/core/vfs/dir.js";
-import path from "path";
+import path from "path-browserify";
 
 export class FileEntry extends TreeItem {
     filePath: string;
 
-    constructor(filePath: string, type: "directory" | "file", papi: PageAPI, isRootElement = false) {
+    constructor(filePath: string, type: "directory" | "file", papi: PageAPI, isRootElement = false, target="_blank") {
         super(path.basename(filePath), type + " on " + filePath);
         this.filePath = filePath;
         if (path.basename(filePath).startsWith(".")) {
@@ -19,11 +19,11 @@ export class FileEntry extends TreeItem {
         if (type === "file") {
             this.link = {
                 href: "file://" + filePath,
-                target: "_blank",
+                target
             };
             this.actions = [{
                 async callback(t) {
-                    let f = await papi.fs;
+                    const f = await papi.fs;
                     await f.removeEntry(filePath);
                 },
                 label: "Delete file",
@@ -31,10 +31,10 @@ export class FileEntry extends TreeItem {
                 id: "delete-file"
             }, {
                 async callback() {
-                    let f = await papi.fs;
-                    let rlf = await f.readLargeFile(filePath);
-                    let u = URL.createObjectURL(rlf);
-                    let aElem = document.createElement('a');
+                    const f = await papi.fs;
+                    const rlf = await f.readLargeFile(filePath);
+                    const u = URL.createObjectURL(rlf);
+                    const aElem = document.createElement('a');
                     aElem.href = u;
                     aElem.download = path.basename(filePath);
                     aElem.click();
@@ -44,7 +44,7 @@ export class FileEntry extends TreeItem {
                 id: "download-file"
             }, {
                 async callback(tdp) {
-                    let ft = tdp as FT;
+                    const ft = tdp as FT;
                     ft.rename(filePath);
                 },
                 label: "Rename file",
@@ -57,9 +57,9 @@ export class FileEntry extends TreeItem {
             this.actions = [
                 {
                     async callback(treeDataProvider, treeItem, hbe) {
-                        let ft = treeDataProvider as FT;
-                        let f = await papi.fs;
-                        let nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
+                        const ft = treeDataProvider as FT;
+                        const f = await papi.fs;
+                        const nwPath = path.join(filePath, "new dir " + crypto.randomUUID());
                         await f.createFile(nwPath);
 
                         setTimeout(()=>{
@@ -73,9 +73,9 @@ export class FileEntry extends TreeItem {
                 {
                     async callback(t) {
 
-                        let ft = t as FT;
-                        let f = await papi.fs;
-                        let nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
+                        const ft = t as FT;
+                        const f = await papi.fs;
+                        const nwPath = path.join(filePath, "new dir " + crypto.randomUUID());
                         await f.mkdir(nwPath, { recursive: false });
                         setTimeout(() => {
                             ft.rename(nwPath);
@@ -93,7 +93,7 @@ export class FileEntry extends TreeItem {
                         if (isRootElement) {
                             return;
                         }
-                        let f = await papi.fs;
+                        const f = await papi.fs;
                         await f.removeDirectory(filePath, { recursive: true });
                     },
                     label: "Remove directory",
@@ -118,7 +118,7 @@ export class FT implements TreeDataProvider<FileEntry> {
     #onStateShouldChange: Emitter<{ path: string, state: "rename" }> = new Emitter();
     onStateShouldChange = this.#onStateShouldChange.event;
     rootActions: Action<FileEntry>[] = [];
-
+    _target: string = "_blank";
     rename(path: string) {
         this.#onStateShouldChange.emit({ path, state: "rename" });
     }
@@ -241,15 +241,16 @@ export class FT implements TreeDataProvider<FileEntry> {
         return actions;
     }
 
-    constructor(fsApi: FSProviderAPI, pageAPI: PageAPI, rootFileEntry: FileEntry) {
+    constructor(fsApi: FSProviderAPI, pageAPI: PageAPI, rootFileEntry: FileEntry, target="_blank") {
+        this._target = target;
         this.fsApi = fsApi;
         this.pageApi = pageAPI;
         this.rootActions = [{
             async callback(treeDataProvider, treeItem, hbe) {
-                let genName = "new " + crypto.randomUUID();
-                let genPath = path.resolve(rootFileEntry.filePath, genName);
-                let wf = await fsApi.writeFile(genPath, new Uint8Array(0).buffer, 0, 0, O_EXCL);
-                let ft = treeDataProvider as FT;
+                const genName = "new " + crypto.randomUUID();
+                const genPath = path.join(rootFileEntry.filePath, genName);
+                const wf = await fsApi.writeFile(genPath, new Uint8Array(0).buffer, 0, 0, O_EXCL);
+                const ft = treeDataProvider as FT;
                 ft.rename(genPath);
             },
             label: "New file",
@@ -264,12 +265,12 @@ export class FT implements TreeDataProvider<FileEntry> {
         return el;
     }
     async getChildren(el: FileEntry): Promise<FileEntry[] | null> {
-        let st = await this.fsApi.stat(el.filePath);
+        const st = await this.fsApi.stat(el.filePath);
         if ((st.mode & S_IFMT) === S_IFDIR) {
             return (await this.fsApi.ls(el.filePath)).map((v) => {
                 return new FileEntry(
-                    path.resolve(el.filePath, v.name),
-                    v.dt_type === DirType.DIR ? "directory" : "file", this.pageApi
+                    path.join(el.filePath, v.name),
+                    v.dt_type === DirType.DIR ? "directory" : "file", this.pageApi, false, this._target
                 );
             });
         }

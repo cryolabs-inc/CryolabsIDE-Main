@@ -4,12 +4,14 @@
     import { onMount } from "svelte";
     import { FileEntry, FT } from "./file";
     import FileTreeItem from "./FileTreeItem.svelte";
-    let { rootDir }: { rootDir: string } = $props();
+    let { rootDir, target = "_blank" }: { rootDir: string, target?: string } = $props();
+    console.log(target);
     let fileAPI = $state<FSProviderAPI>();
     let papi = usePageAPI();
-    let rootFileEntry = $derived(new FileEntry(rootDir, "directory", papi, true));
+    let rootFileEntry = $derived(new FileEntry(rootDir, "directory", papi, true, target));
+    
     let treeDataProvider = $derived<FT | undefined>(
-        fileAPI && new FT(fileAPI, papi, rootFileEntry),
+        fileAPI && new FT(fileAPI, papi, rootFileEntry, target),
     );
     onMount(()=>{
         (async()=>{

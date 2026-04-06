@@ -31,3 +31,9 @@ vite.config.ts.timestamp-*
 /static/manual_config.yaml
 /base_client_image/mu-cxx/build
 /home
+/static/disk.sqfs
+/dist
+/package-lock.json
+/static/initrd
+/full-site.zip
+/static/disk.gz

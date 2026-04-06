@@ -1,7 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
-    import { BookIcon, CircleQuestionMarkIcon, FileIcon, GitBranchIcon } from "@lucide/svelte";
+    import { BookIcon, CircleQuestionMarkIcon, FileIcon, GitBranchIcon, Settings2Icon } from "@lucide/svelte";
 
     import { getAllContexts, onMount } from "svelte";
     import type { SidePanelItem } from "$lib/components/base/panel/SidePanelItem";
@@ -22,13 +22,16 @@
     } from "$lib/base/resourceCtx";
     import { Emitter } from "$lib/base/events";
     import FilePanel from "../panel/contents/FilePanel.svelte";
+    import SettingsSidePanel from "../panel/contents/SettingsSidePanel.svelte";
     import Emulator from "../emulator/Emulator.svelte";
     import { setWM, WM } from "../windows/WM";
     import StatusBar from "../statusbar/StatusBar.svelte";
     import Git from "../git/Git.svelte";
     import DialogContainer from "$lib/base/dialog/DialogContainer.svelte";
+    import CommandPanel from "$lib/base/commands/CommandPanel.svelte";
+    import { CommandRegistry, setCommandRegistry } from "$lib/base/commands/CommandRegistry.svelte";
 
-    let { basePath = "/", rootURL}: { basePath?: string, rootURL: string } = $props();
+    let { basePath = "/", rootURL, emulatorConfig }: { basePath?: string, rootURL: string, emulatorConfig?: Record<string, any> } = $props();
 
     class FullEditorPrefs {
         lowerTabsHeight: number = 20;
@@ -75,6 +78,13 @@
             clickable: true,
             tooltip: "File",
             panel: Git
+        },
+        {
+            id: "settingspage",
+            Icon: Settings2Icon,
+            clickable: true,
+            tooltip: "Settings",
+            panel: SettingsSidePanel,
         }
     ] as SidePanelItem<unknown>[];
     let items: SidePanelItem<unknown>[] | undefined = $state();
@@ -110,6 +120,9 @@
     setResourceManager(resourceManager);
     let rc = new ResourceLinkContext();
     setResourceLinkCtx(rc);
+    const commandRegistry = new CommandRegistry();
+    setCommandRegistry(commandRegistry);
+
     let diagContainer = $state<DialogContainer>();
 
     let papi = $derived(new PageAPI(rc, rootURL));
@@ -123,6 +136,7 @@
     setWM(wm);
     onMount(async () => {
         papi.dialogManager = diagContainer?.getManager()||null;
+        papi.commandRegistry = commandRegistry;
         if (!lowerTab || !upperTab || !stimulusPane) {
             return;
         }
@@ -162,6 +176,7 @@
 
 <div class="w-full h-full flex flex-col">
     <DialogContainer bind:this={diagContainer} />
+    <CommandPanel />
     <div class="w-full h-full flex flex-row">
         <ResizablePaneGroup direction="horizontal">
             <ResizablePane minSize={20}>
@@ -208,7 +223,7 @@
             </ResizablePane>
         </ResizablePaneGroup>
 
-        <Emulator onResize={onResize.event} {basePath}></Emulator>
+        <Emulator onResize={onResize.event} {basePath} {emulatorConfig}></Emulator>
     </div>
     <div>
         <StatusBar></StatusBar>

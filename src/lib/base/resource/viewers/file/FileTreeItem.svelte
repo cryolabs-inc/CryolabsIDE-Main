@@ -16,7 +16,7 @@
     import ContextMenuContent from "$lib/components/ui/context-menu/context-menu-content.svelte";
     import { ContextMenuCheckboxItem } from "$lib/components/ui/context-menu";
     import { S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
-    import path from "path";
+    import path from "path-browserify";
     import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
     import ContextMenuSeparator from "$lib/components/ui/context-menu/context-menu-separator.svelte";
     import ContextMenuLabel from "$lib/components/ui/context-menu/context-menu-label.svelte";
@@ -40,6 +40,7 @@
     let label = $derived(isRootDir ? tdp.rootLabel : ftreeItem.label);
     let dirs = $state<HTMLInputElement>();
     let isSelected = $state<boolean>(false);
+    let err = $state<string>();
     let contextMenuActions = $derived.by(() => {
         // Get all selected entries
         const selectedEntries = tdp.allEntries.filter(e => tdp.selectedEntries.has(e.filePath));
@@ -88,7 +89,7 @@
         if (e.dataTransfer.files.length > 0) {
             let firstFile = e.dataTransfer.files[0];
             let firstArr = new Uint8Array(await firstFile.arrayBuffer());
-            await tdp.fsApi.writeFile(path.resolve(ftreeItem.filePath, firstFile.name), comlink.transfer(firstArr.buffer, [firstArr.buffer]))
+            await tdp.fsApi.writeFile(path.join(ftreeItem.filePath, firstFile.name), comlink.transfer(firstArr.buffer, [firstArr.buffer]))
         }
         let dat = e.dataTransfer.getData("text");
         if (dat) {
@@ -101,7 +102,7 @@
                 
                 let st = await tdp.fsApi.stat(nwPath);
                 if ((st.mode & S_IFMT) === S_IFDIR) {
-                    nwPath = path.resolve(nwPath, path.basename(pathRetrieved));
+                    nwPath = path.join(nwPath, path.basename(pathRetrieved));
                 }
                 tdp.fsApi.renameEntry(pathRetrieved, nwPath);
                 // we will mvoe from path a to path b.
@@ -141,7 +142,9 @@
 
         let disp: Disposable | undefined = undefined;
         (async () => {
+            try {
             let interm = await tdp.getChildren(ftreeItem);
+            
             if (!interm) return;
             childrenTreeItems = interm.slice().sort((a, b)=>{return a.prio - b.prio}) as FileEntry[];
             disp = await tdp.fsApi.watchForRefresh(
@@ -151,6 +154,9 @@
                     }
                 }),
             );
+            } catch (E) {
+                err = "Unable to read directory. <br /> Possible causes: Directory might not exist, or requested view pointed to a file."
+            }
         })();
         return () => {
             tdp.unregisterEntry(ftreeItem);
@@ -267,7 +273,7 @@
                             }}
                             draggable={!isRenaming}
                             href={ftreeItem.link.href}
-                            target={"upper"}
+                            target={ftreeItem.link.target}
                         >
                             {ftreeItem.label}
                         </Link>
@@ -345,6 +351,9 @@
     </div>
     
 {/snippet}
+{#if err!=null}
+<div>{@html err}</div>
+{:else}
 <div bind:this={wholeDiv} ondrop={droppedFile.bind(null, ftreeItem.filePath)} role="directory" ondragover={e=>{
     
     e.preventDefault();
@@ -394,3 +403,4 @@
         </ContextMenuContent>
     </ContextMenu>
 </div>
+{/if}

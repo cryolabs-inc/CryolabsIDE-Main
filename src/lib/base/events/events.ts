@@ -38,7 +38,7 @@ export class Emitter<T> implements Disposable {
     if (!this.eventTarget) {
       return false;
     }
-    let ce =  new CustomEvent<T>(EVENT_NAME, { detail: data });
+    const ce =  new CustomEvent<T>(EVENT_NAME, { detail: data });
     this.eventTarget.dispatchEvent(
      ce
     );

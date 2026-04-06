@@ -17,7 +17,7 @@ export interface ExtendablePromise<T> {
 }
 export function ConstructExtendablePromise<T = void>() {
     let Resolve: (val: T) => void = (va) => { };
-    let promise = new Promise((resolve => {
+    const promise = new Promise((resolve => {
         Resolve = resolve;
     }));
     return { promise, Resolve } as ExtendablePromise<T>;

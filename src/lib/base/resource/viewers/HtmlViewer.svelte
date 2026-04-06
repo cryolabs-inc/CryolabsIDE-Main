@@ -2,5 +2,4 @@
 
     let {html}: {html: string} = $props();
 </script>
-
 {@html html}
