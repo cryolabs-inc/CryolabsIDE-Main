@@ -56,10 +56,12 @@
     resourceManager.registerScheme("term", new TerminalScheme());
     let wm = getWM();
     onMount(async () => {
+        console.debug("[Emulator] Mounting...");
         let terminalEmitter = new Emitter<string>();
         let api = comlink.wrap(await getEmulatorPort(basePath, emulatorConfig)) as WorkerHandlerAPI;
         let serialPort = new MessageChannel();
         let downloadNotif: ReturnType<typeof papi.statusBar.addNotification> | undefined;
+    papi.emulatorStarted.Resolve(!emulatorConfig?.doNotStartEmulator);
 
         let editorDecision: { resolve: (useMonaco: boolean) => void; promise: Promise<boolean> } = (() => {
             let resolve!: (useMonaco: boolean) => void;
@@ -109,10 +111,14 @@
                 // papi.emitAllLoaded();
             }
         };
-
+        setTimeout(()=>{
+            editorDecision.resolve(false);
+        }, 500);
         serialPort.port1.start();
         let fsChan = new MessageChannel();
         let extensionAPIChannel = new MessageChannel();
+        console.debug("[Emulator] Connecting channels to worker...");
+
         await api.connect(
             comlink.transfer(
                 {
@@ -123,6 +129,7 @@
                 [fsChan.port2, serialPort.port2, extensionAPIChannel.port2],
             ),
         );
+        console.debug("[Emulator] Worker connected, wrapping FS and extension API...");
         extensionAPIChannel.port1.start();
         let epapi = comlink.wrap(extensionAPIChannel.port1) as ExtensionAPI;
 
@@ -141,6 +148,7 @@
 
     papi.fsPromise.Resolve(fs);
     papi.extPromise.Resolve(epapi);
+    console.debug("[Emulator] FS and extension API promises resolved, emulator ready.");
     try {
     await fs.mkdir("/user");
     await fs.mkdir("/root");

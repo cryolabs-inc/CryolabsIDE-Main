@@ -19,7 +19,7 @@ export const getEmulatorPort = function (basePath: string, emulatorConfig?: Reco
                         navigator.locks.request(sessionLeaderLock,{mode: "exclusive"} , () => {
                             return new Promise<void>((resolve) => {
                                 // never resolve
-                                
+
                             });
                         }).then(()=>{
                         });

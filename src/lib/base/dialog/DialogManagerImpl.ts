@@ -1,16 +1,17 @@
 import { createContext } from "svelte";
-import type { AutocompleteSuggestion, Dialog, DialogManager, DialogOptions, PromptOptions } from "./DialogManager";
+import type { AutocompleteSuggestion, Dialog, DialogManager, DialogOptions, FilePickerOptions, PromptOptions } from "./DialogManager";
 
 export interface DialogState {
     id: string;
-    type: 'custom' | 'prompt' | 'confirm' | 'alert';
-    options: DialogOptions | PromptOptions | { title: string; message: string };
+    type: 'custom' | 'prompt' | 'confirm' | 'alert' | 'filepicker';
+    options: DialogOptions | PromptOptions | { title: string; message: string } | FilePickerOptions;
     open: boolean;
     resolve: (value: any) => void;
     inputValue?: string;
     suggestions?: AutocompleteSuggestion[];
     showSuggestions?: boolean;
     selectedSuggestionIndex?: number;
+    selectedPickerPath?: string;
 }
 
 export type DialogStore = {
@@ -79,6 +80,21 @@ export class DialogManagerImpl implements DialogManager {
                 options: { title, message },
                 open: true,
                 resolve
+            };
+            this.store.add(dialogState);
+        });
+    }
+
+    showFilePicker(options: FilePickerOptions): Promise<string | null> {
+        return new Promise((resolve) => {
+            const id = generateId();
+            const dialogState: DialogState = {
+                id,
+                type: 'filepicker',
+                options,
+                open: true,
+                resolve,
+                selectedPickerPath: undefined
             };
             this.store.add(dialogState);
         });

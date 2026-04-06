@@ -32,6 +32,7 @@ export interface PromptOptions {
 	required?: boolean;
 	validation?: (value: string) => boolean | string;
 	autocomplete?: AutocompleteProvider;
+	submitOnEnter?: boolean;
 	buttons?: {
 		confirm?: string;
 		cancel?: string;
@@ -42,6 +43,14 @@ export interface Dialog {
 	id: string;
 	options: DialogOptions;
 	close: () => void;
+}
+
+export type FilePickerMode = 'file' | 'directory' | 'both';
+
+export interface FilePickerOptions {
+	title?: string;
+	rootDir: string;
+	mode?: FilePickerMode;
 }
 
 export interface DialogManager {
@@ -64,6 +73,11 @@ export interface DialogManager {
 	 * Show an alert dialog
 	 */
 	alert(title: string, message: string): Promise<void>;
+
+	/**
+	 * Show a file picker dialog and return the selected path
+	 */
+	showFilePicker(options: FilePickerOptions): Promise<string | null>;
 
 	/**
 	 * Close a specific dialog by ID

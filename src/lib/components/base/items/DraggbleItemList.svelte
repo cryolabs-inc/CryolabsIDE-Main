@@ -20,6 +20,7 @@
         Comp: Snippet<[item: T]>;
         selected?: string;
         dndZoneProps?: Partial<Options<T>>;
+        dragDisabled?: boolean;
         class?: string;
     }
     let {
@@ -28,6 +29,7 @@
         selected = $bindable(""),
         orientation = "horizontal",
         dndZoneProps = {},
+        dragDisabled = false,
         class: c,
         ...restDivProps
     }: DProps = $props();
@@ -66,7 +68,7 @@
             orientation === "horizontal" && "flex-row min-h-4",
             c,
         )}
-        use:dndzone={{ flipDurationMs: 20, items: items, ...dndZoneProps }}
+        use:dndzone={{ flipDurationMs: 20, items: items, dragDisabled, ...dndZoneProps }}
         onfinalize={(e) => {
             let oldSelIndex = selIndex;
 
@@ -105,7 +107,8 @@
                     selected = it.id;
                 }}
                 class={twMerge(
-                    "cursor-grab hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/80 flex items-center justify-center",
+                    "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/80 flex items-center justify-center",
+                    dragDisabled ? "cursor-default" : "cursor-grab",
                     selected === it.id &&
                         `${v} border-solid bg-accent/40 border-forground`,
                 )}

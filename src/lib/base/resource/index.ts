@@ -379,10 +379,12 @@ export class FileHandler extends SimpleResourceHandler {
 export class FileTreePanelHandler extends FileHandler {
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
         const pname = this.getPathnameFromRequest(request);
+        const target = new URL(request.url).searchParams.get("target") || "_blank";
         return ResourceResponse.ok<[typeof FileTreeViewer]>("panel", {
             component: FileTreeViewer,
             props: {
-                rootDir: pname
+                rootDir: pname,
+                target
             }
         });
     }

@@ -43,6 +43,7 @@
     <button
         class="cursor-pointer hover:underline border-foreground/80"
         onclick={(e) => {
+            console.log("Link target: " + target);
             if (isPopup) {
                 wm.launchWindow(href, {openMode: "position", position: {
                     X: e.clientX,

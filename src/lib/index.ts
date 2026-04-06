@@ -23,12 +23,12 @@ export {
     useResourceLinkCtx,
     setResourceLinkCtx,
 } from "./base/resourceCtx";
-
+// ─── Tab context ────────────────────────────────────────────────────
+export { getTabContext, setTabContext, type TabContext, type TabContextDelegate } from "./components/base/panel";
 // ─── Window manager ───────────────────────────────────────────────────────────
 export { WM, getWM, setWM } from "./components/base/windows/WM";
-
 // ─── Browser (tab container) ──────────────────────────────────────────────────
-export { default as Browser } from "./components/base/panel/Browser.svelte";
+export { default as Browser, type SerializableTabItem as TabItem } from "./components/base/panel/Browser.svelte";
 
 // ─── Status bar ───────────────────────────────────────────────────────────────
 export { default as StatusBarComponent } from "./components/base/statusbar/StatusBar.svelte";
@@ -42,3 +42,4 @@ export type { TypedEvent } from "./base/events/events";
 
 // ─── Emulator types ───────────────────────────────────────────────────────────
 export type { FSProviderAPI, ExtensionAPI, ConnectParams, WorkerHandlerAPI } from "./emulator/types";
+export {type ExtendablePromise, ConstructExtendablePromise} from "./utils";

@@ -48,7 +48,7 @@
             language: value.type,
             automaticLayout: true,
             theme: "vs-dark",
-
+            readOnly: !!papi.isEditorReadonly,
         });
         
         let watcher: Disposable | undefined = undefined;

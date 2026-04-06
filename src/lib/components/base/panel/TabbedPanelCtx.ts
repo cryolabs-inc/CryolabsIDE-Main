@@ -1,12 +1,14 @@
 import { Emitter } from "$lib/base/events";
 import type { TypedEvent } from "$lib/base/events/events";
-import { createContext } from "svelte";
+import { createContext, type Snippet } from "svelte";
 export interface TabItem {
     id: string;
-    name: string;
+    name: string|(Snippet<[]>);
     objectURL: string;
     clickable: boolean;
+    closeable?: boolean;
     state: "loading"|"none"|"complete";
+    icon?: string;
     closeEvent?: Emitter<void>;
 }
 export class TabContentsCtx<Tab = TabItem> {
@@ -18,6 +20,7 @@ export class TabContentsCtx<Tab = TabItem> {
             return;
         this.destroy();
     }
+    
     destroy() {
         // implement this yourself
     }

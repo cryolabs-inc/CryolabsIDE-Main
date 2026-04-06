@@ -8,11 +8,12 @@
     import { cn } from "$lib/utils";
     import * as codemirror from 'codemirror';
     import { EditorState, type Extension } from "@codemirror/state";
-    import {oneDark} from '@codemirror/theme-one-dark';
+    import {githubDark, githubLight} from '@uiw/codemirror-theme-github';
     import {serverCompletionSource, hoverTooltips, signatureHelp, LSPPlugin, languageServerSupport, serverCompletion} from '@codemirror/lsp-client';
     import Editor from "$lib/components/editor/Editor.svelte";
     import { autocompletion } from "@codemirror/autocomplete";
     import { cpp, cppLanguage } from "@codemirror/lang-cpp";
+  import { getTabContext } from "$lib/components/base/panel";
     let map = {
         cpp: []
     }
@@ -44,11 +45,15 @@
     let page_api = usePageAPI();
     let texten = new TextEncoder();
     let textdec = new TextDecoder();
+    const tab_context = getTabContext();
     onMount(() => {
         if (!div_element) return;
-
-        let ev: codemirror.EditorView | undefined = undefined;
+         let ev: codemirror.EditorView | undefined = undefined;
         let cancelled = false;
+
+(async()=>{
+        let variant = await tab_context.getBrowserVariant();
+       
 
         // Mutable ref so the stored update listener always calls the current callback,
         // even after the view is remounted with a different onChangeContent prop.
@@ -63,9 +68,17 @@
             }
         });
 
-        const extArray = [ul, codemirror.basicSetup, oneDark];
-
+        const extArray = [ul, codemirror.basicSetup];
+        if (variant === "dark")
+            extArray.push(githubDark);
+        else if (variant === "light")
+            extArray.push(githubLight)
+        
+        if (page_api.isEditorReadonly) {
+            extArray.push(EditorState.readOnly.of(true));
+        }
         // Try to reuse a cached instance for this file path.
+
         const cached = page_api.codemirrorCache.acquire(filePath);
         if (cached) {
             ev = cached.view;
@@ -82,6 +95,7 @@
                         doc: await value.text(),
                         extensions: [...extArray]
                     });
+
                 } else {
                     await page_api.languageClients.defaultRegistered;
                     const lc = await page_api.languageClients.loadLanguageClient(filePath);
@@ -115,7 +129,7 @@
                 if (newView) page_api.codemirrorCache.store(filePath, newView, callbackRef);
             })();
         }
-
+    })();
         return () => {
             cancelled = true;
             if (ev) {

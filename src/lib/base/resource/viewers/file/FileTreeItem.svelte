@@ -89,7 +89,7 @@
         if (e.dataTransfer.files.length > 0) {
             let firstFile = e.dataTransfer.files[0];
             let firstArr = new Uint8Array(await firstFile.arrayBuffer());
-            await tdp.fsApi.writeFile(path.resolve(ftreeItem.filePath, firstFile.name), comlink.transfer(firstArr.buffer, [firstArr.buffer]))
+            await tdp.fsApi.writeFile(path.join(ftreeItem.filePath, firstFile.name), comlink.transfer(firstArr.buffer, [firstArr.buffer]))
         }
         let dat = e.dataTransfer.getData("text");
         if (dat) {
@@ -102,7 +102,7 @@
                 
                 let st = await tdp.fsApi.stat(nwPath);
                 if ((st.mode & S_IFMT) === S_IFDIR) {
-                    nwPath = path.resolve(nwPath, path.basename(pathRetrieved));
+                    nwPath = path.join(nwPath, path.basename(pathRetrieved));
                 }
                 tdp.fsApi.renameEntry(pathRetrieved, nwPath);
                 // we will mvoe from path a to path b.
@@ -273,7 +273,7 @@
                             }}
                             draggable={!isRenaming}
                             href={ftreeItem.link.href}
-                            target="upper"
+                            target={ftreeItem.link.target}
                         >
                             {ftreeItem.label}
                         </Link>

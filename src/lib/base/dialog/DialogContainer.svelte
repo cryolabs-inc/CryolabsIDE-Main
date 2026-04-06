@@ -10,8 +10,10 @@
     import Button from "$lib/components/ui/button/button.svelte";
     import { Input } from "$lib/components/ui/input";
     import { DialogManagerImpl, setDialogManager, type DialogState, type DialogStore } from "./DialogManagerImpl";
-    import type { AutocompleteSuggestion, DialogOptions, PromptOptions } from "./DialogManager";
-
+    import type { AutocompleteSuggestion, DialogOptions, FilePickerOptions, PromptOptions } from "./DialogManager";
+    import FilePickerDialog from "./FilePickerDialog.svelte";
+  import { cn } from "$lib/utils";
+    let {class:clz = ""}: {class?: string} = $props();
     async function updateSuggestions(dialog: DialogState, value: string) {
         const opts = dialog.options as PromptOptions;
         if (!opts.autocomplete) {
@@ -33,21 +35,37 @@
     }
 
     function handleKeydown(e: KeyboardEvent, dialog: DialogState) {
-        if (!dialog.showSuggestions || !dialog.suggestions?.length) return;
-
+        const opts = dialog.options as PromptOptions;
         const idx = dialog.selectedSuggestionIndex ?? -1;
 
-        if (e.key === 'ArrowDown') {
+        if (dialog.showSuggestions && dialog.suggestions?.length) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                dialog.selectedSuggestionIndex = Math.min(idx + 1, dialog.suggestions.length - 1);
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                dialog.selectedSuggestionIndex = Math.max(idx - 1, -1);
+                return;
+            } else if (e.key === 'Enter' && idx >= 0) {
+                e.preventDefault();
+                selectSuggestion(dialog, dialog.suggestions[idx]);
+                return;
+            } else if (e.key === 'Escape') {
+                dialog.showSuggestions = false;
+                return;
+            }
+        }
+
+        if (e.key === 'Enter' && opts.submitOnEnter) {
             e.preventDefault();
-            dialog.selectedSuggestionIndex = Math.min(idx + 1, dialog.suggestions.length - 1);
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            dialog.selectedSuggestionIndex = Math.max(idx - 1, -1);
-        } else if (e.key === 'Enter' && idx >= 0) {
-            e.preventDefault();
-            selectSuggestion(dialog, dialog.suggestions[idx]);
-        } else if (e.key === 'Escape') {
-            dialog.showSuggestions = false;
+            const value = dialog.inputValue ?? '';
+            if (opts.validation) {
+                const result = opts.validation(value);
+                if (result !== true) return;
+            }
+            dialog.resolve(value);
+            dialogManager.closeDialog(dialog.id);
         }
     }
 
@@ -81,17 +99,18 @@
 </script>
 
 {#each dialogs as dialog (dialog.id)}
-    <Dialog bind:open={dialog.open} onOpenChange={(open) => {
+    <Dialog  bind:open={dialog.open} onOpenChange={(open) => {
         if (!open) {
             dialog.resolve(null);
             dialogManager.closeDialog(dialog.id);
         }
     }}>
         <DialogContent
+        
             showCloseButton={dialog.type !== 'confirm' && (dialog.type !== 'custom' || (dialog.options as DialogOptions).closable !== false)}
-            interactOutsideBehavior={dialog.type === 'confirm' ? 'ignore' : 'close'}
-            modal={dialog.type !== 'custom' || (dialog.options as DialogOptions).modal !== false}
-            class="top-[10%] translate-y-0"
+            interactOutsideBehavior={dialog.type === 'confirm' || dialog.type === 'filepicker' ? 'ignore' : 'close'}
+            // modal={dialog.type !== 'custom' || (dialog.options as DialogOptions).modal !== false}
+            class={cn(clz, "top-[10%] translate-y-0")}
         >
             {#if dialog.type === 'custom'}
                 {@const opts = dialog.options as DialogOptions}
@@ -206,6 +225,23 @@
                         Confirm
                     </Button>
                 </DialogFooter>
+
+            {:else if dialog.type === 'filepicker'}
+                {@const opts = dialog.options as FilePickerOptions}
+                <DialogHeader>
+                    <DialogTitle>{opts.title ?? 'Select File'}</DialogTitle>
+                </DialogHeader>
+                <FilePickerDialog
+                    options={opts}
+                    onConfirm={(path) => {
+                        dialog.resolve(path);
+                        dialogManager.closeDialog(dialog.id);
+                    }}
+                    onCancel={() => {
+                        dialog.resolve(null);
+                        dialogManager.closeDialog(dialog.id);
+                    }}
+                />
 
             {:else if dialog.type === 'alert'}
                 {@const opts = dialog.options as { title: string; message: string }}

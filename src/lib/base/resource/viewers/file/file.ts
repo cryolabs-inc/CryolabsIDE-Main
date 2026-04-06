@@ -10,7 +10,7 @@ import path from "path-browserify";
 export class FileEntry extends TreeItem {
     filePath: string;
 
-    constructor(filePath: string, type: "directory" | "file", papi: PageAPI, isRootElement = false) {
+    constructor(filePath: string, type: "directory" | "file", papi: PageAPI, isRootElement = false, target="_blank") {
         super(path.basename(filePath), type + " on " + filePath);
         this.filePath = filePath;
         if (path.basename(filePath).startsWith(".")) {
@@ -19,7 +19,7 @@ export class FileEntry extends TreeItem {
         if (type === "file") {
             this.link = {
                 href: "file://" + filePath,
-                target: "_blank",
+                target
             };
             this.actions = [{
                 async callback(t) {
@@ -59,7 +59,7 @@ export class FileEntry extends TreeItem {
                     async callback(treeDataProvider, treeItem, hbe) {
                         const ft = treeDataProvider as FT;
                         const f = await papi.fs;
-                        const nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
+                        const nwPath = path.join(filePath, "new dir " + crypto.randomUUID());
                         await f.createFile(nwPath);
 
                         setTimeout(()=>{
@@ -75,7 +75,7 @@ export class FileEntry extends TreeItem {
 
                         const ft = t as FT;
                         const f = await papi.fs;
-                        const nwPath = path.resolve(filePath, "new dir " + crypto.randomUUID());
+                        const nwPath = path.join(filePath, "new dir " + crypto.randomUUID());
                         await f.mkdir(nwPath, { recursive: false });
                         setTimeout(() => {
                             ft.rename(nwPath);
@@ -118,7 +118,7 @@ export class FT implements TreeDataProvider<FileEntry> {
     #onStateShouldChange: Emitter<{ path: string, state: "rename" }> = new Emitter();
     onStateShouldChange = this.#onStateShouldChange.event;
     rootActions: Action<FileEntry>[] = [];
-
+    _target: string = "_blank";
     rename(path: string) {
         this.#onStateShouldChange.emit({ path, state: "rename" });
     }
@@ -241,13 +241,14 @@ export class FT implements TreeDataProvider<FileEntry> {
         return actions;
     }
 
-    constructor(fsApi: FSProviderAPI, pageAPI: PageAPI, rootFileEntry: FileEntry) {
+    constructor(fsApi: FSProviderAPI, pageAPI: PageAPI, rootFileEntry: FileEntry, target="_blank") {
+        this._target = target;
         this.fsApi = fsApi;
         this.pageApi = pageAPI;
         this.rootActions = [{
             async callback(treeDataProvider, treeItem, hbe) {
                 const genName = "new " + crypto.randomUUID();
-                const genPath = path.resolve(rootFileEntry.filePath, genName);
+                const genPath = path.join(rootFileEntry.filePath, genName);
                 const wf = await fsApi.writeFile(genPath, new Uint8Array(0).buffer, 0, 0, O_EXCL);
                 const ft = treeDataProvider as FT;
                 ft.rename(genPath);
@@ -268,8 +269,8 @@ export class FT implements TreeDataProvider<FileEntry> {
         if ((st.mode & S_IFMT) === S_IFDIR) {
             return (await this.fsApi.ls(el.filePath)).map((v) => {
                 return new FileEntry(
-                    path.resolve(el.filePath, v.name),
-                    v.dt_type === DirType.DIR ? "directory" : "file", this.pageApi
+                    path.join(el.filePath, v.name),
+                    v.dt_type === DirType.DIR ? "directory" : "file", this.pageApi, false, this._target
                 );
             });
         }

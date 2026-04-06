@@ -36,3 +36,4 @@ vite.config.ts.timestamp-*
 /package-lock.json
 /static/initrd
 /full-site.zip
+/static/disk.gz

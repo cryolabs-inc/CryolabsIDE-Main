@@ -162,7 +162,7 @@ class FileInfo implements Qid {
         });
     }
     async moveTo(oldName: string, newDfid: FileInfo, newName: string) {
-        webfs.rename(p.resolve(this.pathId, oldName), p.resolve(newDfid.pathId, newName));
+        webfs.rename(p.join(this.pathId, oldName), p.join(newDfid.pathId, newName));
         // Remove from old parent's cache
         this.childrenCache.delete(oldName);
         // Invalidate new parent's cache if the new name already existed
@@ -170,7 +170,7 @@ class FileInfo implements Qid {
     }
     async link(name: string, toPath: string) {
 
-        await webfs.link(p.resolve(this.pathId, name), toPath);
+        await webfs.link(p.join(this.pathId, name), toPath);
     }
     async truncate(nwSize: number) {
         webfs.index.get(this.pathId)?.update({size: nwSize});
@@ -204,7 +204,7 @@ class FileInfo implements Qid {
         return await this.fs.readlink(this.pathId);
     }
     async symlink(name: string, tgt: string, gid: number) {
-        const symlinkPath = p.resolve(this.pathId, name);
+        const symlinkPath = p.join(this.pathId, name);
         await this.fs.symlink(tgt, symlinkPath);
         await this.fs.chown(symlinkPath, 0, gid);
         this.emitChange(this.pathId, "symlink", true);
@@ -214,7 +214,7 @@ class FileInfo implements Qid {
         throw withErrno('ENOTSUP', "Mknod() is not supported.")
     }
     async mkdir(name: string, mode: number, gid: number) {
-        await webfs.mkdir(p.resolve(this.pathId, name), {"mode": mode, uid:0, gid});
+        await webfs.mkdir(p.join(this.pathId, name), {"mode": mode, uid:0, gid});
         this.emitChange(this.pathId, "mkdir", true);
     }
     async open(mode: number) {
@@ -271,11 +271,11 @@ class FileInfo implements Qid {
         this.childrenCache.clear();
     }
     async unlink(name: string) {
-        const statsInfo = await webfs.stat(p.resolve(this.pathId, name));
+        const statsInfo = await webfs.stat(p.join(this.pathId, name));
         if ((statsInfo.mode & S_IFMT) === S_IFDIR) {
-            await webfs.rmdir(p.resolve(this.pathId, name));
+            await webfs.rmdir(p.join(this.pathId, name));
         } else {
-            await webfs.unlink(p.resolve(this.pathId, name));
+            await webfs.unlink(p.join(this.pathId, name));
         }
         // Clear removed child's caches before dropping reference
         const cachedChild = this.childrenCache.get(name);
@@ -302,7 +302,7 @@ class FileInfo implements Qid {
             return this.childrenCache.get(name)!;
         }
 
-        const npId = p.resolve(this.pathId, name);
+        const npId = p.join(this.pathId, name);
         const stats = await webfs.stat(npId); // exception will be thrown if it does nto exist!
         const qid: QidWithPath = {
             type: 0,
@@ -360,7 +360,7 @@ class FileInfo implements Qid {
     }
     async create(name: string, mode: number, gid: number) {
         const { fs } = this;
-        const filePath = p.resolve(this.pathId, name);
+        const filePath = p.join(this.pathId, name);
         await webfs.createFile(filePath, {mode, uid:0, gid, size: 0});
         await webfs.write(filePath, new Uint8Array(0), 0);
         this.emitChange(this.pathId, "create", true);

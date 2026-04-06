@@ -1,4 +1,5 @@
-import type { DialogManager } from "$lib/base/dialog/DialogManager";
+import type { DialogManager, FilePickerOptions } from "$lib/base/dialog/DialogManager";
+import { Prefs } from "$lib/base/prefs";
 import {languages} from '@codemirror/language-data'
 import type { Disposable } from "$lib/base/disposable";
 import { Emitter } from "$lib/base/events"
@@ -6,6 +7,7 @@ import type { TypedEvent } from "$lib/base/events/events";
 import type { ResourceLinkContext } from "$lib/base/resourceCtx";
 import type { ExtensionAPI, FSProviderAPI } from "$lib/emulator/types";
 import { SrcControlGit } from "$lib/git";
+import type { CommandRegistry } from "$lib/base/commands/CommandRegistry.svelte";
 import { ConstructExtendablePromise, type ExtendablePromise } from "$lib/utils";
 import path from "path-browserify";
 import { createContext } from "svelte";
@@ -14,6 +16,7 @@ import * as codemirror from 'codemirror';
 import * as codemirror_lsp from '@codemirror/lsp-client';
 import { autocompletion } from "@codemirror/autocomplete";
 import type { ResourceResponse } from "$lib/base/resource";
+import type { WM } from "../../windows/WM";
 interface PTerminal {
     textEv: TypedEvent<string>;
     onResizeNeeded: TypedEvent<void>;
@@ -69,7 +72,7 @@ class LanguageClients {
     }
     async identifyLanguageId(file_path: string) {
         let ename = path.extname(file_path);
-        console.log(languages)
+        console.debug("[LSP] Available CodeMirror language definitions:", languages);
         for (let lang of languages){
             
             if (lang.extensions.filter(v=>ename.substring(1).toLowerCase() ===v.toLowerCase()).length > 0) return {lang_id: lang.name.toLowerCase(), lang_extension: await lang.load(), };
@@ -78,7 +81,8 @@ class LanguageClients {
         return null;
     }
     async registerAllConfigs() {
-
+        const started = await this.page_api.emulatorStarted.promise;
+        if (!started) return;
         await this.registerConfig("c++", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
         await this.registerConfig("c", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
     }
@@ -92,8 +96,8 @@ class LanguageClients {
         const ret = await this.identifyLanguageId(file_name);
         if (!ret) return null;
         const {lang_id, lang_extension} = ret;
-        console.log(lang_id);
-        console.log(this.lang_id_to_registration);
+        console.debug("[LSP] Loading client for language:", lang_id);
+        console.debug("[LSP] Registered language configs:", this.lang_id_to_registration);
         const c = this.lang_id_to_client.get(lang_id);
         const langRegistration = this.lang_id_to_registration.get(lang_id);
         if (!langRegistration) {
@@ -140,7 +144,7 @@ class LanguageClients {
                 }
 
                 send(message: string): void {
-                    console.log(message);
+                    console.debug("[LSP] Sending message to server:", message);
                     const body = encoder.encode(message);
                     const header = encoder.encode(`Content-Length: ${body.byteLength}${HEADER_DELIMITER}`);
                     const packet = new Uint8Array(header.byteLength + body.byteLength);
@@ -159,7 +163,7 @@ class LanguageClients {
                 }
 
                 private dispatch(message: string) {
-                    console.log("dispatched response: " + message);
+                    console.debug("[LSP] Dispatching response from server:", message);
                     for (const handler of this.handlers) {
                         handler(message);
                     }
@@ -264,7 +268,18 @@ export class CodemirrorInstanceCache {
 }
 
 type ViewmodeCallback = (request: Request)=>ResourceResponse<any, any>;
+export type Variants = "dark"|"light"
 export class PageAPI {
+    variant: Variants = "light";
+    #globalVarChangedEmitter = new Emitter<string>();
+    onGlobalVariantChanged: TypedEvent<string> = this.#globalVarChangedEmitter.event;
+    setGlobalVariant(nwVariant: typeof this.variant) {
+        this.variant = nwVariant;
+        this.#globalVarChangedEmitter.emit(nwVariant);
+    }
+    windows: WM|null = null;
+    isEditorReadonly = false;
+    emulatorStarted: ExtendablePromise<boolean> = ConstructExtendablePromise<boolean>();
     readonly statusBar = new StatusBar();
     readonly codemirrorCache = new CodemirrorInstanceCache();
     rc: ResourceLinkContext;
@@ -274,6 +289,7 @@ export class PageAPI {
         return await SrcControlGit.fromPat(await this.fs, pat);
     }
     dialogManager: DialogManager | null = null;
+    commandRegistry: CommandRegistry | null = null;
     viewModeMap: Map<string, ViewmodeCallback> = new Map();
     fsExtensionMap: [RegExp, ViewmodeCallback][] = [];
     addFSExtension(fsExtension: [RegExp, ViewmodeCallback]) {
@@ -287,10 +303,17 @@ export class PageAPI {
             }
         }
     }
-    constructor(rc: ResourceLinkContext, rootURL = "file:///", dialogManager: DialogManager | null = null) {
+    constructor(rc: ResourceLinkContext, rootURL = "file:///", dialogManager: DialogManager | null = null, isReadonly = false) {
         this.rc = rc;
+        this.isEditorReadonly = isReadonly;
         this.rootURL = rootURL;
         this.dialogManager = dialogManager;
+        this.repoChangeEmitter.event(({ owner, repo }) => {
+            this.fileconfig.then(fc => {
+                fc.github_link = { ...fc.github_link, owner, repo };
+                this.setFileConfig(fc);
+            });
+        });
     }
     resizeAll() {
         this.#terminals.forEach(v => {
@@ -304,7 +327,7 @@ export class PageAPI {
             try {
 
                 const fs = await this.fs;
-                const asLarge = await fs.readLargeFile(path.resolve(new URL(this.rootURL).pathname, "cryolabs.conf"));
+                const asLarge = await fs.readLargeFile(path.join(new URL(this.rootURL).pathname, "cryolabs.conf"));
                 this._fileconfig = toml.parse(await asLarge.text())
                 resolve(this._fileconfig);
             } catch {
@@ -319,14 +342,15 @@ export class PageAPI {
         return navigator.locks.request("config-lock", async () => {
             const fs = await this.fs;
             try {
-                await fs.createFile(path.resolve(this.rootPath, "cryolabs.conf"));
+                await fs.createFile(path.join(this.rootPath, "cryolabs.conf"));
             } catch {
 
             }
             
             this._fileconfig = { ...s };
-            await fs.writeFile(path.resolve(this.rootPath, "cryolabs.conf"), new TextEncoder().encode(toml.stringify(s as toml.TomlTable)).buffer as ArrayBuffer);
-
+            let bu =new TextEncoder().encode(toml.stringify(s as toml.TomlTable)).buffer as ArrayBuffer;
+            await fs.writeFile(path.join(this.rootPath, "cryolabs.conf"), bu);
+            await fs.truncate(path.join(this.rootPath, "cryolabs.conf"), bu.byteLength);
         });
     }
     #onAllLoadedEmitter = new Emitter<void>();
@@ -352,6 +376,41 @@ export class PageAPI {
 
     showTerminal(id: string) {
         this.openLink(`term:///${id}`, "tabs_lower");
+    }
+    readonly repoChangeEmitter = new Emitter<{ owner: string; repo: string }>();
+    async getGitManager(): Promise<SrcControlGit | null> {
+        const dm = this.dialogManager;
+        if (!dm) return null;
+
+        while (true) {
+            let token = await Prefs.default().get<string | undefined>('git.personal_access', undefined);
+
+            if (!token) {
+                token = (await dm.showPrompt({
+                    title: 'Enter personal access token',
+                    message: 'You will need to enter your personal access token. Use <a href="https://github.com/settings/tokens/new" target="_blank">this link</a>',
+                    validation: (value) => value.startsWith('ghp_'),
+                    required: true,
+                })) ?? undefined;
+
+                if (!token) return null;
+                await Prefs.default().store('git.personal_access', token);
+            }
+
+            const git = await this.getFromPat(token);
+            if (!git) {
+                await Prefs.default().store('git.personal_access', null);
+                continue;
+            }
+            git.owner = await this.fileconfig.then(fc => fc.github_link?.owner ?? null);
+            git.repo = await this.fileconfig.then(fc => fc.github_link?.repo ?? null);
+            git.repoChangeEmitter = this.repoChangeEmitter;
+            return git;
+        }
+    }
+    showFilePicker(options: FilePickerOptions): Promise<string | null> {
+        if (!this.dialogManager) return Promise.resolve(null);
+        return this.dialogManager.showFilePicker(options);
     }
     openLink(link: string, target = "_blank") {
         this.rc.openLink(link, target);

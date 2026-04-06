@@ -1,5 +1,6 @@
 import type { FSProviderAPI } from "$lib/emulator/types";
 import type { AutocompleteProvider, AutocompleteSuggestion } from "$lib/base/dialog/DialogManager";
+import { Emitter } from "$lib/base/events";
 import { S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
 import { Octokit } from 'octokit';
 import p from "path-browserify";
@@ -70,7 +71,7 @@ async function craftTree(gitCtx: Ghctx, cb: (gitCtx: Ghctx, fs: FSProviderAPI, p
     const arr = await gitCtx.fs.readdir(path);
 
     for (const s of arr) {
-        o.push(await cb(gitCtx, gitCtx.fs, p.resolve(path, s)));
+        o.push(await cb(gitCtx, gitCtx.fs, p.join(path, s)));
 
     }
     return o;
@@ -102,11 +103,23 @@ export class SrcControlGit {
             return false;
         }
     }
+    async getLogin(): Promise<string | null> {
+        if (!this.octokit) return null;
+        try {
+            const { data } = await this.octokit.rest.users.getAuthenticated();
+            return data.login;
+        } catch {
+            return null;
+        }
+    }
+    repoChangeEmitter?: Emitter<{ owner: string; repo: string }>;
     setRepo(repo: string) {
         this.repo = repo;
+        if (this.owner && this.repo) this.repoChangeEmitter?.emit({ owner: this.owner, repo: this.repo });
     }
     setOwner(owner: string) {
         this.owner = owner;
+        if (this.owner && this.repo) this.repoChangeEmitter?.emit({ owner: this.owner, repo: this.repo });
     }
     constructor(fs: FSProviderAPI) {
         this.fs = fs;
@@ -140,7 +153,7 @@ export class SrcControlGit {
         const nwCom = await kit.rest.git.createCommit({
             owner: gctx.username,
             repo: gctx.reponame,
-            message: "Test",
+            message,
             tree: rootTree.sha,
             parents: [refData.data.object.sha]
         });
@@ -180,22 +193,14 @@ export class SrcControlGit {
         });
 
         // Delete existing contents to prevent stale files
-        const existing = await this.fs.readdir(path);
-        for (const entry of existing) {
-            const fullPath = p.resolve(path, entry);
-            try {
-                await this.fs.removeDirectory(fullPath, { recursive: true });
-            } catch {
-                try {
-                    await this.fs.removeEntry(fullPath);
-                } catch { }
-            }
-        }
-
+        try {
+        await this.fs.removeDirectory(path, {recursive: true});
+        } catch {}
+await this.fs.mkdir(path, {recursive: true});
         // Create directories first
         for (const it of t.data.tree) {
             if (it.type === "tree" && it.path) {
-                const fullPath = p.resolve(path, it.path);
+                const fullPath = p.join(path, it.path);
                 try {
                     await this.fs.mkdir(fullPath, { recursive: true });
                 } catch { }
@@ -205,7 +210,7 @@ export class SrcControlGit {
         // Then write blobs
         for (const it of t.data.tree) {
             if (it.type === "blob" && it.path && it.sha) {
-                const fullPath = p.resolve(path, it.path);
+                const fullPath = p.join(path, it.path);
                 // Ensure parent directory exists
                 const parentDir = p.dirname(fullPath);
                 try {
