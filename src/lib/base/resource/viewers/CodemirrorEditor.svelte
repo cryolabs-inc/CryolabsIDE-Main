@@ -160,7 +160,7 @@
             cached.callbackRef.fn = onChangeContent;
             div_element.appendChild(ev.dom);
         } else {
-            (async () => {
+            await (async () => {
                 let newView: codemirror.EditorView | undefined;
 
                 if (!lsp_config) {

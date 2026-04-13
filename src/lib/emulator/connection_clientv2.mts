@@ -262,10 +262,15 @@ export class ConnectionClient {
     }
 
     frame_msg_handler(data: Uint8Array) {
-        console.log(new TextDecoder().decode(data));
         const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
         const fid = dv.getUint32(0);
+        const preExisting = this.stream_map.has(fid);
         const entry = this.get_stream(fid);
+        const byteLen = data.subarray(4).byteLength;
+        console.debug(`[conn] Frame fid=${fid} bytes=${byteLen} stream_preexisting=${preExisting}`);
+        if (!preExisting) {
+            console.warn(`[conn] Frame arrived for fid=${fid} before start_process registered it — data may be lost if PipeClosed also arrives early`);
+        }
         entry.writer.write(data.subarray(4)).catch(() => {});
     }
 
@@ -328,6 +333,10 @@ export class ConnectionClient {
                 const dv = new DataView(buffer.slice(9).buffer);
                 const fid = dv.getUint32(0);
                 const entry = this.stream_map.get(fid);
+                console.debug(`[conn] PipeClosed fid=${fid} stream_found=${!!entry}`);
+                if (!entry) {
+                    console.warn(`[conn] PipeClosed for fid=${fid} but no stream in map — data already lost`);
+                }
                 if (entry) { try { entry.writer.close(); } catch { } }
                 this.stream_map.delete(fid);
                 this.stream_map_to.delete(fid);
@@ -422,12 +431,18 @@ export class ConnectionClient {
         const procFid = this.nextFid();
         const inData = [process_path, process_args.length, ...process_args, stdinFid, stderrFid, stdoutFid, procFid];
 
-        const [payload] = Marshall(inTypes, inData, false);
-        await this._send_msg(ConnectionMethods.StartProcess, payload);
-
+        // Register streams before sending the request so that Frame/PipeClosed
+        // messages arriving before (or with) StartProcessResponse are buffered
+        // into the correct streams rather than creating orphaned entries that
+        // get deleted by PipeClosed before start_process can capture them.
         const stdout_stream = this.get_stream(stdoutFid);
         const stderr_stream = this.get_stream(stderrFid);
         const stdin_stream = await this.get_to_stream(stdinFid);
+        console.debug(`[conn] start_process cmd=${process_path} args=${JSON.stringify(process_args)} stdinFid=${stdinFid} stderrFid=${stderrFid} stdoutFid=${stdoutFid} procFid=${procFid} — streams registered, sending StartProcess`);
+
+        const [payload] = Marshall(inTypes, inData, false);
+        await this._send_msg(ConnectionMethods.StartProcess, payload);
+        console.debug(`[conn] start_process StartProcessResponse received for procFid=${procFid} stdout_in_map=${this.stream_map.has(stdoutFid)}`);
 
         return {
             stdout_stream: stdout_stream.readable,

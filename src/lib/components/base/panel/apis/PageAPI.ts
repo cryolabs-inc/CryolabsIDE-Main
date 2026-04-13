@@ -123,7 +123,11 @@ export class DefaultWorkspace extends codemirror_lsp.Workspace {
     const normalizedPath = filePath.startsWith("/root") ? "/user" + filePath.slice(5) : filePath;
     const finalUrl = filePath.startsWith("/root")
       ? "file://" + normalizedPath
-      : uri.replace(/^[a-z][a-z0-9+\-.]*:/i, "fs-linux:");
+      : (()=>{
+        let orgUrl = fpurl.href;
+        let idxOfColon = orgUrl.indexOf("//");
+        return "fs-linux:"+orgUrl.substring(idxOfColon);
+      })()
     console.error("Displaying: " + finalUrl);
     this.page_api.openLink(finalUrl, '_blank');
     const deadline = Date.now() + 5000;

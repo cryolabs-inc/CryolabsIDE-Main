@@ -915,9 +915,9 @@ static int signalfd_handler(int sfd, int epoll_evts, void *user_data) {
           s->data_bytes.resize(sizeof(ca));
           memcpy(s->data_bytes.data(), ca, sizeof(ca));
           s->send_data_bytes(s, 0, MSG_KILLPROCESSRESPONSE);
-          destroy_fd_state(a);
         }
-        pids_to_fdstates.erase(it);
+        // Don't erase pids_to_fdstates here — close_pipe needs it when
+        // the pipes naturally deliver EOF and the client responds.
       }
     }
   }

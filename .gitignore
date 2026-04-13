@@ -41,3 +41,4 @@ vite.config.ts.timestamp-*
 /mysrv.sh
 /static/disk1
 /disk.gz
+/nohup.out

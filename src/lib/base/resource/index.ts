@@ -465,18 +465,25 @@ export class LinuxFSHandler extends SimpleResourceHandler {
     }
 
     async #readFile(filePath: string): Promise<Uint8Array> {
+        console.debug(`[LinuxFSHandler] #readFile start path=${filePath}`);
         const e = await this.#pageAPI.ext;
         const catProc = await e.openProcess("/usr/bin/cat", [filePath]);
         const { stdout } = await catProc.streams();
         const chunks: Uint8Array[] = [];
         const reader = stdout.getReader();
+        let chunkCount = 0;
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             chunks.push(value);
+            chunkCount++;
         }
         await catProc.wait();
         const totalLen = chunks.reduce((n, c) => n + c.byteLength, 0);
+        console.debug(`[LinuxFSHandler] #readFile done path=${filePath} chunks=${chunkCount} totalBytes=${totalLen}`);
+        if (totalLen === 0) {
+            console.warn(`[LinuxFSHandler] #readFile got 0 bytes for ${filePath} — likely race: PipeClosed arrived before stream was registered`);
+        }
         const buf = new Uint8Array(totalLen);
         let off = 0;
         for (const chunk of chunks) { buf.set(chunk, off); off += chunk.byteLength; }
@@ -524,6 +531,7 @@ export class LinuxFSHandler extends SimpleResourceHandler {
 
     async doRetrpanel(request: Request): Promise<ResourceResponse> {
         const filePath = this.pathname(request);
+        console.log("Loading filepath: " + filePath);
         const e = await this.#pageAPI.ext;
 
         const readBuffer = await this.#readFile(filePath);
