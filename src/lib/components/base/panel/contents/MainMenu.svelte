@@ -26,6 +26,9 @@
     <Link href="file:///test.txt" target="_blank">
         omg
     </Link>
+    <Link href="fs-linux:///etc/os-release" target="_blank">
+        os-release
+    </Link>
     <Link href="term:///serial0" target="tabs_lower">
         open serial0
     </Link>

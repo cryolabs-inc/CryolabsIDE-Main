@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { FileHandler, FileTreePanelHandler, getResourceManager, ResourceResponse, SimpleResourceHandler } from "$lib/base/resource";
+    import { FileHandler, FileTreePanelHandler, LinuxFSHandler, getResourceManager, ResourceResponse, SimpleResourceHandler } from "$lib/base/resource";
     import { getAllContexts, onMount } from "svelte";
     import * as comlink from "comlink";
     import { Emitter } from "$lib/base/events";
@@ -138,6 +138,7 @@
         resourceManager.registerScheme("file", new FileHandler(fs, useMonaco, 
             papi.viewModeMap, papi.fsExtensionMap));
         resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
+        resourceManager.registerScheme("fs-linux", new LinuxFSHandler(papi));
         papi.addTerminal("serial0", {
             textEv: terminalEmitter.event,
             onResizeNeeded: onResize,

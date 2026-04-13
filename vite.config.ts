@@ -15,12 +15,13 @@ export default defineConfig({ plugins: [tailwindcss(), sveltekit(), commonjs(), 
     },
 },server: {
     hmr: false,
-    allowedHosts: ["disc.hs.vc"]
+    allowedHosts: ["disc.hs.vc", "cryolabs.org"]
 }, "worker": {
     format: "es"
 },
    preview: {
-	allowedHosts: ["disc.hs.vc"]
+	allowedHosts: ["disc.hs.vc", "cryolabs.org"],
+    
 }
 
 

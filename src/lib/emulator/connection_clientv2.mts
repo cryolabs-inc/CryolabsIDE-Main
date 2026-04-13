@@ -214,7 +214,10 @@ export class ConnectionClient {
     get_stream(fid: number): { readable: ReadableStream<Uint8Array>, writer: WritableStreamDefaultWriter<Uint8Array> } {
         let entry = this.stream_map.get(fid);
         if (!entry) {
-            const { readable, writable } = create_duplex_web_stream();
+            const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>(
+                {},
+                new CountQueuingStrategy({ highWaterMark: Infinity })
+            );
             entry = { readable, writer: writable.getWriter() };
             this.stream_map.set(fid, entry);
         }
@@ -258,13 +261,12 @@ export class ConnectionClient {
         this._send_msg(ConnectionMethods.PipeClosed, Marshall(["u32"], [fid])[0], 0);
     }
 
-    async frame_msg_handler(data: Uint8Array) {
+    frame_msg_handler(data: Uint8Array) {
+        console.log(new TextDecoder().decode(data));
         const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
         const fid = dv.getUint32(0);
         const entry = this.get_stream(fid);
-        try {
-            await entry.writer.write(data.subarray(4));
-        } catch { }
+        entry.writer.write(data.subarray(4)).catch(() => {});
     }
 
     async read_loop() {
@@ -313,6 +315,7 @@ export class ConnectionClient {
             if (msg_method === ConnectionMethods.KillProcessResponse) {
                 const dv = new DataView(buffer.buffer, buffer.byteOffset + 9);
                 const pid = dv.getUint32(0);
+                console.log("KILLED PROCESS: ", pid);
                 const exit_code = dv.getUint32(4);
                 this.pid_exitcodes.set(pid, exit_code);
                 let x;
@@ -325,9 +328,7 @@ export class ConnectionClient {
                 const dv = new DataView(buffer.slice(9).buffer);
                 const fid = dv.getUint32(0);
                 const entry = this.stream_map.get(fid);
-                if (entry) {
-                    try { entry.writer.close(); } catch { }
-                }
+                if (entry) { try { entry.writer.close(); } catch { } }
                 this.stream_map.delete(fid);
                 this.stream_map_to.delete(fid);
             }

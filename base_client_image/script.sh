@@ -1,4 +1,4 @@
-echo Setting up 
+echo Setting up the disk image with the script
 rm -rf /var/lib/apt/lists/*
 cp /mnt/custom_init /etc/init.d/custom_init
 g++ /mnt/mu-cxx/main.cc -m32 -static -o /usr/bin/mu

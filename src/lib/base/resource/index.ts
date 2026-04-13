@@ -6,6 +6,7 @@ import Mime from 'mime';
 import path from "path-browserify";
 import { Errno, type Exception } from "kerium";
 import type { FSProviderAPI } from '$lib/emulator/types';
+import { type PageAPI } from '$lib/components/base/panel/apis/PageAPI';
 import FileTreeViewer from "./viewers/file/FileTreeViewer.svelte";
 import HtmlViewer from "./viewers/HtmlViewer.svelte";
 import { O_TRUNC } from "@zenfs/core/constants.js";
@@ -14,6 +15,8 @@ import CodemirrorEditor from "./viewers/CodemirrorEditor.svelte";
 import * as langCpp from '@codemirror/lang-cpp';
 import SettingsPage from "./viewers/SettingsPage.svelte";
 import { Prefs } from "$lib/base/prefs";
+import { Emitter } from "$lib/base/events";
+import type { TypedEvent } from "$lib/base/events/events";
 // --- Resource Types ---
 
 
@@ -163,7 +166,7 @@ type RR<T> = T extends ResourceResponse<infer X, infer Y> ?
     ResourceResponse<X, Y> : never;
 export class SimpleResourceHandler implements ResourceHandlerEntry {
     pathname(request: Request) {
-        return new URL(request.url).pathname;
+        return decodeURIComponent(new URL(request.url).pathname);
     }
     async doGet(request: Request): Promise<ResourceResponse> {
         return ResourceResponse.methodNotAllowed();
@@ -437,6 +440,122 @@ class SettingsSchemeHandler extends SimpleResourceHandler {
         return ResourceResponse.ok<[typeof SettingsPage]>("panel", {
             component: SettingsPage,
             props: {}
+        });
+    }
+}
+
+export class LinuxFSHandler extends SimpleResourceHandler {
+    #pageAPI: PageAPI;
+    #changeEmitters: Map<string, Emitter<Uint8Array>> = new Map();
+    #watchers: Map<string, { kill(): Promise<number> }> = new Map();
+    #suppressNext: Map<string, number> = new Map();
+
+    constructor(pageAPI: PageAPI) {
+        super();
+        this.#pageAPI = pageAPI;
+    }
+
+    onFileChanged(filePath: string): TypedEvent<Uint8Array> {
+        let emitter = this.#changeEmitters.get(filePath);
+        if (!emitter) {
+            emitter = new Emitter<Uint8Array>();
+            this.#changeEmitters.set(filePath, emitter);
+        }
+        return emitter.event;
+    }
+
+    async #readFile(filePath: string): Promise<Uint8Array> {
+        const e = await this.#pageAPI.ext;
+        const catProc = await e.openProcess("/usr/bin/cat", [filePath]);
+        const { stdout } = await catProc.streams();
+        const chunks: Uint8Array[] = [];
+        const reader = stdout.getReader();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+        }
+        await catProc.wait();
+        const totalLen = chunks.reduce((n, c) => n + c.byteLength, 0);
+        const buf = new Uint8Array(totalLen);
+        let off = 0;
+        for (const chunk of chunks) { buf.set(chunk, off); off += chunk.byteLength; }
+        return buf;
+    }
+
+    async #startWatcher(filePath: string) {
+        // Kill any existing watcher for this path
+        await this.#watchers.get(filePath)?.kill();
+
+        const e = await this.#pageAPI.ext;
+        const proc = await e.openProcess("/usr/bin/inotifywait", [
+            "-m", "-e", "close_write", "--format", "%e", filePath
+        ]);
+        this.#watchers.set(filePath, proc);
+
+        const { stdout } = await proc.streams();
+        const reader = stdout.pipeThrough(new TextDecoderStream()).getReader();
+
+        (async () => {
+            while (true) {
+                const { done } = await reader.read();
+                if (done) break;
+                // Skip events triggered by our own writes
+                const suppress = this.#suppressNext.get(filePath) ?? 0;
+                if (suppress > 0) {
+                    this.#suppressNext.set(filePath, suppress - 1);
+                    continue;
+                }
+                // File changed externally — re-read and propagate
+                const newContent = await this.#readFile(filePath);
+                this.#changeEmitters.get(filePath)?.emit(newContent);
+                const cached = this.#pageAPI.codemirrorCache.acquire(filePath);
+                if (cached) {
+                    const newText = new TextDecoder().decode(newContent);
+                    const view = cached.view;
+                    view.dispatch({
+                        changes: { from: 0, to: view.state.doc.length, insert: newText }
+                    });
+                }
+            }
+            this.#watchers.delete(filePath);
+        })();
+    }
+
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+        const filePath = this.pathname(request);
+        const e = await this.#pageAPI.ext;
+
+        const readBuffer = await this.#readFile(filePath);
+        const mt = (await fileTypeFromBuffer(readBuffer))?.mime || Mime.getType(path.extname(filePath)) || "";
+        const value = new Blob([readBuffer.buffer as ArrayBuffer], { type: mt });
+
+        const onChangeContent = async (newC: Uint8Array) => {
+            this.#suppressNext.set(filePath, (this.#suppressNext.get(filePath) ?? 0) + 1);
+            const teeProc = await e.openProcess("/usr/bin/tee", [filePath]);
+            const teeStreams = await teeProc.streams();
+            const writer = teeStreams.stdin.getWriter();
+            await writer.write(newC);
+            await writer.close();
+            await teeProc.wait();
+            this.#changeEmitters.get(filePath)?.emit(newC);
+        };
+
+        this.#startWatcher(filePath);
+
+        const onDestroy = () => {
+            this.#watchers.get(filePath)?.kill();
+            this.#watchers.delete(filePath);
+        };
+
+        return new ResourceResponse<[typeof CodemirrorEditor]>(200, "OK", {
+            resource: {
+                type: "panel",
+                data: {
+                    component: CodemirrorEditor,
+                    props: { value, onChangeContent, filePath, onDestroy }
+                }
+            }
         });
     }
 }

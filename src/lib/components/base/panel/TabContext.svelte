@@ -2,6 +2,7 @@
   import { onMount, type ComponentProps, type Snippet } from "svelte";
   import { setTabContext, type TabContext, type TabContextDelegate } from ".";
   import Browser from "./Browser.svelte";
+  import type { Variants } from "./apis/PageAPI";
   let {
     delegate,
     children
@@ -10,7 +11,7 @@
     children: Snippet;
   } = $props();
   class Context implements TabContext {
-    async getBrowserVariant(): Promise<NonNullable<ComponentProps<typeof Browser>["variant"]>> {
+    async getBrowserVariant(): Promise<Variants> {
       return (await this.delegate()
         .getBrowserVariant()) ?? "light";
     }

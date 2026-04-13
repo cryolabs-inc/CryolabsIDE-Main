@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/signalfd.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -896,28 +897,31 @@ int fd_tcp_listener_handler(int epoll_fd, int epoll_evts, void *user_data) {
   return 0;
 }
 
-static void sigchld_handler(int sig) {
-  int status;
-  pid_t killed_pid;
-  while ((killed_pid = waitpid(-1, &status, WNOHANG)) > 0) {
-    auto it = pids_to_fdstates.find(killed_pid);
-
-    if (it != pids_to_fdstates.end()) {
-      auto the_set = it->second;
-      for (auto a : the_set) {
-        ConnectionState *s = (ConnectionState *)a->conn_state;
-        s->data_bytes.clear();
-        uint32_t pfid = be32toh(a->self_pid);
-        uint32_t exit_code = htobe32((WEXITSTATUS(status)));
-        uint32_t ca[] = {pfid, exit_code};
-        s->data_bytes.resize(sizeof(ca));
-        memcpy(s->data_bytes.data(), ca, sizeof(ca));
-        s->send_data_bytes(s, 0, MSG_KILLPROCESSRESPONSE);
-        destroy_fd_state(a);
+static int signalfd_handler(int sfd, int epoll_evts, void *user_data) {
+  struct signalfd_siginfo si;
+  while (read(sfd, &si, sizeof(si)) == sizeof(si)) {
+    int status;
+    pid_t killed_pid;
+    while ((killed_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+      auto it = pids_to_fdstates.find(killed_pid);
+      if (it != pids_to_fdstates.end()) {
+        auto the_set = it->second;
+        for (auto a : the_set) {
+          ConnectionState *s = (ConnectionState *)a->conn_state;
+          s->data_bytes.clear();
+          uint32_t pfid = be32toh(a->self_pid);
+          uint32_t exit_code = htobe32(WEXITSTATUS(status));
+          uint32_t ca[] = {pfid, exit_code};
+          s->data_bytes.resize(sizeof(ca));
+          memcpy(s->data_bytes.data(), ca, sizeof(ca));
+          s->send_data_bytes(s, 0, MSG_KILLPROCESSRESPONSE);
+          destroy_fd_state(a);
+        }
+        pids_to_fdstates.erase(it);
       }
-      pids_to_fdstates.erase(it);
     }
   }
+  return 0;
 }
 static int hvc_handler(int epoll_fd, int epoll_evts, void* user_data) {
  ConnectionState *conn_state = (ConnectionState *)user_data;
@@ -1066,11 +1070,12 @@ int main(int argc, char **argv) {
   // write(hvcFd, &test, sizeof(test));
   
 #endif
-  struct sigaction c = {};
-  c.sa_handler = sigchld_handler;
-  sigemptyset(&c.sa_mask);
-  c.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-  sigaction(SIGCHLD, &c, NULL);
+  sigset_t mask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGCHLD);
+  sigprocmask(SIG_BLOCK, &mask, NULL);
+  int sfd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+  reg_listener(sfd, signalfd_handler, nullptr, EPOLLIN);
   signal(SIGPIPE, SIG_IGN);
 
   printf("Server started on localhost:8088\n");

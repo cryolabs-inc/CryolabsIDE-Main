@@ -37,3 +37,7 @@ vite.config.ts.timestamp-*
 /static/initrd
 /full-site.zip
 /static/disk.gz
+/fild.sh
+/mysrv.sh
+/static/disk1
+/disk.gz

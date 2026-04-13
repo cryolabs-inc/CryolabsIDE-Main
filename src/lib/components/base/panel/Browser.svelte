@@ -4,7 +4,7 @@
   import { getResourceManager } from "$lib/base/resource";
   import { Loader2Icon, SearchIcon, XIcon } from "@lucide/svelte";
   import DraggbleItemList from "../items/DraggbleItemList.svelte";
-  import { onMount, type Component, type ComponentProps, type Snippet } from "svelte";
+  import { mount, unmount, onMount, type Snippet } from "svelte";
   import { useResourceLinkCtx } from "$lib/base/resourceCtx";
   import path from "path-browserify";
   import type { TabItem } from "./TabbedPanelCtx";
@@ -15,9 +15,11 @@
   import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
   import { Emitter } from "$lib/base/events";
   import type { TabContext as ITabContext, TabContextDelegate } from ".";
-  import TabContext from "./TabContext.svelte";
   import { usePageAPI, type Variants } from "./apis/PageAPI";
+  import TabContentsComponent, { type PanelResult } from "./TabContents.svelte";
+
   export type SerializableTabItem = Omit<TabItem, "closeEvent">;
+
   let {
     target = crypto.randomUUID(),
     showTabs = true,
@@ -41,6 +43,7 @@
     tabsDragDisabled?: boolean;
     homepage?: TabItem;
   } = $props();
+
   const page_api = usePageAPI();
   let items: TabItem[] = $state<TabItem[]>([]);
   let selectedTabItem = $state<string>("default");
@@ -62,14 +65,17 @@
         return "light-cryolabs";
     }
   });
+
   let seled = $derived.by<TabItem>(() => {
     if (items.length === 0) {
       return homepage;
     }
     return items.filter((v) => v.id === selectedTabItem)[0];
   });
+
   let activeTabsChanged = new Emitter<TabItem>();
   let tabListChanged = new Emitter<TabItem[]>();
+
   $effect(() => {
     activeTabsChanged.emit(seled);
   });
@@ -78,10 +84,93 @@
     tabListChanged.emit(items);
   });
 
+  // ── Tab content cache ──────────────────────────────────────────────────────
+  // Plain Map — Svelte never observes it, no reactive circular-dep risk.
+  type CachedTab = {
+    instance: ReturnType<typeof mount>;
+    el: HTMLDivElement;
+    lastActiveAt: number;
+    mountedURL: string;
+  };
+  const TAB_TTL_MS = 5 * 60 * 1000;
+  const tabCache = new Map<string, CachedTab>();
+  let containerEl: HTMLElement | undefined = $state(undefined);
+
+  // Mount/show the active tab; detach (but keep alive) all others.
+  $effect(() => {
+    const tab = seled;
+    if (!tab || !containerEl) return;
+
+    const existing = tabCache.get(tab.id);
+    // If the tab's URL changed since it was mounted, treat it as a navigation:
+    // unmount the stale instance so it remounts fresh below.
+    if (existing && existing.mountedURL !== tab.objectURL) {
+      if (existing.el.parentElement) existing.el.parentElement.removeChild(existing.el);
+      unmount(existing.instance);
+      tabCache.delete(tab.id);
+    }
+
+    if (!tabCache.has(tab.id)) {
+      const el = document.createElement("div");
+      el.style.cssText = "width:100%;height:100%;";
+      const instance = mount(TabContentsComponent, {
+        target: el,
+        props: { tabItem: tab, getPanel, delegate: new TCD(tab.id) },
+      });
+      tabCache.set(tab.id, { instance, el, lastActiveAt: Date.now(), mountedURL: tab.objectURL });
+    } else {
+      tabCache.get(tab.id)!.lastActiveAt = Date.now();
+    }
+
+    // Swap: detach all cached tabs from the container, then attach only the active one.
+    for (const [id, cached] of tabCache) {
+      if (id !== tab.id && cached.el.parentElement === containerEl) {
+        containerEl.removeChild(cached.el);
+      }
+    }
+    const active = tabCache.get(tab.id)!;
+    if (!active.el.parentElement) {
+      containerEl.appendChild(active.el);
+    }
+  });
+
+  // When a tab is closed (removed from items), immediately unmount its cached instance.
+  // tabCache is a plain Map so reading it here doesn't create a reactive dependency —
+  // this effect only re-runs when `items` changes.
+  $effect(() => {
+    const currentIds = new Set(items.map((v) => v.id));
+    currentIds.add("default"); // homepage is always valid
+    for (const [id, cached] of tabCache) {
+      if (!currentIds.has(id)) {
+        if (cached.el.parentElement) cached.el.parentElement.removeChild(cached.el);
+        unmount(cached.instance);
+        tabCache.delete(id);
+      }
+    }
+  });
+
   let extProm = ConstructExtendablePromise();
   onMount(() => {
     extProm.Resolve();
+
+    const ttlInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [id, cached] of tabCache) {
+        if (id !== selectedTabItem && now - cached.lastActiveAt > TAB_TTL_MS) {
+          if (cached.el.parentElement) cached.el.parentElement.removeChild(cached.el);
+          unmount(cached.instance);
+          tabCache.delete(id);
+        }
+      }
+    }, 30_000);
+
     return () => {
+      clearInterval(ttlInterval);
+      for (const [, cached] of tabCache) {
+        if (cached.el.parentElement) cached.el.parentElement.removeChild(cached.el);
+        unmount(cached.instance);
+      }
+      tabCache.clear();
       activeTabsChanged.dispose();
       tabListChanged.dispose();
       items.forEach((v) => {
@@ -89,13 +178,15 @@
       });
     };
   });
+
   let rctx = useResourceLinkCtx();
+
   export function tab_open(
     { link, target: linkTarget = target }: { link: string; target?: string },
     addANewOneEitherway: boolean = false,
   ) {
     if (linkTarget === "_never") {
-      return; // do nothing. never open a tab here.
+      return;
     }
     if (
       !linkTarget.startsWith("_") &&
@@ -116,7 +207,6 @@
     let pname = new URL(link).pathname;
     let ename = path.basename(pname);
     if (linkTarget === "_self" && items.length > 0) {
-      // just modify the current page.
       seled.name = ename;
       seled.objectURL = link;
       let seledIdx = items.findIndex((v) => v.id === selectedTabItem);
@@ -136,17 +226,14 @@
     selectedTabItem = newItem.id;
     return newItem.id;
   }
+
   rctx.onLinkClicked((inp) => {
     tab_open(inp);
   });
+
   let rm = getResourceManager();
 
-  async function getPanel(tab: TabItem): Promise<{
-    snip?: Snippet<[any]>;
-    Comp?: Component;
-    props?: any;
-    args?: any;
-  } | null> {
+  async function getPanel(tab: TabItem): Promise<PanelResult> {
     await extProm.promise;
     tab.state = "loading";
     let resource = await rm.fetch(tab.objectURL, {
@@ -155,6 +242,7 @@
     tab.state = "complete";
     if (resource.resource && resource.resource.type === "panel") {
       return {
+        kind: "component",
         Comp: resource.resource.data.component,
         props: resource.resource.data.props,
       };
@@ -165,30 +253,22 @@
         let stringData = new TextDecoder().decode(
           new Uint8Array(await b.arrayBuffer()),
         );
-
         if (b.type === "text/html") {
-          return {
-            snip: thtmlContent,
-            args: stringData,
-          };
+          return { kind: "html", content: stringData };
         }
-        return {
-          snip: txtContent,
-          args: stringData,
-        };
+        return { kind: "text", content: stringData };
       }
     }
     if (resource.status === 404) {
-      return {
-        snip: four04,
-        args: undefined,
-      };
+      return { kind: "404" };
     }
     return null;
   }
+
   export const tabs = () => {
     return [...$state.snapshot(items)];
   };
+
   export function updateTab(
     id: string,
     props: Partial<
@@ -202,6 +282,7 @@
     if (idx === -1) return;
     items[idx] = { ...items[idx], ...props };
   }
+
   export const serialize = () => {
     return {
       it: $state
@@ -210,6 +291,7 @@
       seledId: selectedTabItem,
     };
   };
+
   export const deserialize = (val: { it: TabItem[]; seledId: string }) => {
     if (val instanceof Array) {
       items = val;
@@ -221,6 +303,7 @@
 
   export const onActiveTabChanged = activeTabsChanged.event;
   export const onTabListChanged = tabListChanged.event;
+
   class BrowserTabContext implements ITabContext {
     #id: string;
     async getBrowserVariant() {
@@ -257,12 +340,14 @@
     if (!id) return null;
     return new BrowserTabContext(id);
   }
+
   export function activeTab() {
     const { closeEvent, ...it } = items.filter(
       (v) => v.id === selectedTabItem,
     )[0];
     return $state.snapshot<SerializableTabItem>(it) as SerializableTabItem;
   }
+
   class TCD implements TabContextDelegate {
     async getBrowserVariant(): Promise<Variants> {
       return variant;
@@ -297,15 +382,6 @@
   }
 </script>
 
-{#snippet thtmlContent(content: string)}
-  {@html content}
-{/snippet}
-{#snippet txtContent(content: string)}
-  {content}
-{/snippet}
-{#snippet four04(arg: undefined)}
-  <div>This content was not found.</div>
-{/snippet}
 {#snippet Tab(tabItem: TabItem)}
   <ContextMenu>
     <ContextMenuTrigger>
@@ -363,20 +439,7 @@
     </ContextMenuContent>
   </ContextMenu>
 {/snippet}
-{#snippet TabContents(tabItem: TabItem)}
-  <TabContext delegate={new TCD(tabItem.id)}>
-    {#await getPanel(tabItem)}
-      <div></div>
-    {:then s}
-      {#if s?.Comp}
-        <s.Comp onUnload={tabItem.closeEvent?.event} {...s.props}></s.Comp>
-      {/if}
-      {#if s?.snip}
-        {@render s.snip(s.args as any)}
-      {/if}
-    {/await}
-  </TabContext>
-{/snippet}
+
 <div
   class={cn("flex w-full h-full flex-col relative bg-background text-foreground", variantClasses)}
 >
@@ -427,10 +490,6 @@
         />
       </div>
     {/if}
-    <div class="w-full h-full">
-      {#if seled}
-        {@render TabContents(seled)}
-      {/if}
-    </div>
+    <div bind:this={containerEl} class="w-full h-full"></div>
   </diV>
 </div>

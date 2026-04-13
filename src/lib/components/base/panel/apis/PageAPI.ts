@@ -17,6 +17,7 @@ import * as codemirror_lsp from '@codemirror/lsp-client';
 import { autocompletion } from "@codemirror/autocomplete";
 import type { ResourceResponse } from "$lib/base/resource";
 import type { WM } from "../../windows/WM";
+import type { ChangeSet, Text } from "@codemirror/state";
 interface PTerminal {
     textEv: TypedEvent<string>;
     onResizeNeeded: TypedEvent<void>;
@@ -60,6 +61,79 @@ interface FileConfig {
 type LangConfig = {
     lang_command: string,
     lang_args: string[]
+}
+class DefaultWorkspaceFile implements codemirror_lsp.WorkspaceFile {
+  constructor(readonly uri: string,
+              readonly languageId: string,
+              public version: number,
+              public doc: Text,
+              readonly view: codemirror.EditorView) {}
+
+  getView() { return this.view }
+}
+interface WorkspaceFileUpdate {
+  file: codemirror_lsp.WorkspaceFile
+  prevDoc: Text
+  changes: ChangeSet
+}
+export class DefaultWorkspace extends codemirror_lsp.Workspace {
+  files: DefaultWorkspaceFile[] = []
+  private fileVersions: {[uri: string]: number} = Object.create(null)
+  page_api: PageAPI | null = null
+
+  nextFileVersion(uri: string) {
+    return this.fileVersions[uri] = (this.fileVersions[uri] ?? -1) + 1
+  }
+
+  syncFiles() {
+    let result: WorkspaceFileUpdate[] = []
+    for (let file of this.files) {
+      let plugin = codemirror_lsp.LSPPlugin.get(file.view)
+      if (!plugin) continue
+      let changes = plugin.unsyncedChanges
+      if (!changes.empty) {
+        result.push({changes, file, prevDoc: file.doc})
+        file.doc = file.view.state.doc
+        file.version = this.nextFileVersion(file.uri)
+        plugin.clear()
+      }
+    }
+    return result
+  }
+
+  openFile(uri: string, languageId: string, view: codemirror.EditorView) {
+    if (this.getFile(uri))
+      throw new Error("Default workspace implementation doesn't support multiple views on the same file")
+    let file = new DefaultWorkspaceFile(uri, languageId, this.nextFileVersion(uri), view.state.doc, view) 
+    this.files.push(file)
+    this.client.didOpen(file)
+  }
+
+  closeFile(uri: string) {
+    let file = this.getFile(uri)
+    if (file) {
+      this.files = this.files.filter(f => f != file)
+      this.client.didClose(uri)
+    }
+  }
+  async displayFile(uri: string): Promise<codemirror.EditorView | null> {
+    if (!this.page_api) return null;
+    const fpurl = new URL(uri);
+    const filePath = decodeURIComponent(fpurl.pathname);
+    const normalizedPath = filePath.startsWith("/root") ? "/user" + filePath.slice(5) : filePath;
+    const finalUrl = filePath.startsWith("/root")
+      ? "file://" + normalizedPath
+      : uri.replace(/^[a-z][a-z0-9+\-.]*:/i, "fs-linux:");
+    console.error("Displaying: " + finalUrl);
+    this.page_api.openLink(finalUrl, '_blank');
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const cached = this.page_api.codemirrorCache.acquire(normalizedPath);
+      if (cached) return cached.view;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    return null;
+  }
 }
 class LanguageClients {
     page_api: PageAPI;
@@ -209,10 +283,15 @@ class LanguageClients {
                 }
             }
             const ct = new CryolabsTransport();
-            const lsp_client =  new codemirror_lsp.LSPClient({
-                "extensions": [codemirror_lsp.serverDiagnostics()],
+            const page_api = this.page_api;
+            const lsp_client = new codemirror_lsp.LSPClient({
+                extensions: [codemirror_lsp.serverDiagnostics()],
                 timeout: 100000,
-            
+                workspace: (client) => {
+                    const ws = new DefaultWorkspace(client);
+                    ws.page_api = page_api;
+                    return ws;
+                },
             });
             
             lsp_client.connect(ct);
@@ -224,6 +303,7 @@ class LanguageClients {
         return {client: this.lang_id_to_client.get(lang_id)!, lang_extension};
     }
 }
+
 const CODEMIRROR_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface CodemirrorCacheEntry {
@@ -422,6 +502,19 @@ export class PageAPI {
     }
     get fs() {
         return this.fsPromise.promise;
+    }
+
+    private _watcherIdPromise: Promise<string> | null = null;
+    get watcherId(): Promise<string> {
+        if (!this._watcherIdPromise) {
+            this._watcherIdPromise = (async () => {
+                const id = crypto.randomUUID();
+                const fsp = await this.fs;
+                await fsp.assignId(id);
+                return id;
+            })();
+        }
+        return this._watcherIdPromise;
     }
 
 }

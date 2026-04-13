@@ -11,9 +11,72 @@
     import {githubDark, githubLight} from '@uiw/codemirror-theme-github';
     import {serverCompletionSource, hoverTooltips, signatureHelp, LSPPlugin, languageServerSupport, serverCompletion} from '@codemirror/lsp-client';
     import Editor from "$lib/components/editor/Editor.svelte";
-    import { autocompletion } from "@codemirror/autocomplete";
+    import { acceptCompletion } from "@codemirror/autocomplete";
+    import { indentMore } from "@codemirror/commands";
+    import { keymap, Decoration, ViewPlugin, EditorView as EView } from "@codemirror/view";
+    import { StateField, StateEffect } from "@codemirror/state";
+    import { jumpToDefinition } from "@codemirror/lsp-client";
     import { cpp, cppLanguage } from "@codemirror/lang-cpp";
   import { getTabContext } from "$lib/components/base/panel";
+
+    const setCtrlHover = StateEffect.define<{ from: number; to: number } | null>();
+
+    const ctrlHoverField = StateField.define<ReturnType<typeof Decoration.none.map>>({
+        create: () => Decoration.none,
+        update(deco, tr) {
+            deco = deco.map(tr.changes);
+            for (const e of tr.effects) {
+                if (e.is(setCtrlHover)) {
+                    deco = e.value
+                        ? Decoration.set([Decoration.mark({ class: "cm-ctrl-hover" }).range(e.value.from, e.value.to)])
+                        : Decoration.none;
+                }
+            }
+            return deco;
+        },
+        provide: (f) => EView.decorations.from(f),
+    });
+
+    const ctrlClickExtension = [
+        ctrlHoverField,
+        ViewPlugin.define((view) => {
+            const clearHover = () => view.dispatch({ effects: setCtrlHover.of(null) });
+
+            const onMouseMove = (e: MouseEvent) => {
+                if (!e.ctrlKey && !e.metaKey) { clearHover(); return; }
+                const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+                if (pos == null) { clearHover(); return; }
+                const word = view.state.wordAt(pos);
+                view.dispatch({ effects: setCtrlHover.of(word ? { from: word.from, to: word.to } : null) });
+            };
+
+            const onMouseDown = (e: MouseEvent) => {
+                if (!e.ctrlKey && !e.metaKey) return;
+                const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
+                if (pos == null) return;
+                e.preventDefault();
+                view.dispatch({ selection: { anchor: pos }, effects: setCtrlHover.of(null) });
+                jumpToDefinition(view);
+            };
+
+            const onKeyUp = (e: KeyboardEvent) => {
+                if (e.key === "Control" || e.key === "Meta") clearHover();
+            };
+
+            view.dom.addEventListener("mousemove", onMouseMove);
+            view.dom.addEventListener("mousedown", onMouseDown);
+            window.addEventListener("keyup", onKeyUp);
+
+            return {
+                destroy() {
+                    view.dom.removeEventListener("mousemove", onMouseMove);
+                    view.dom.removeEventListener("mousedown", onMouseDown);
+                    window.removeEventListener("keyup", onKeyUp);
+                },
+            };
+        }),
+    ];
+
     let map = {
         cpp: []
     }
@@ -34,12 +97,16 @@
         value: value,
         onChangeContent = () => {},
         filePath,
-        lsp_config
+        lsp_config,
+        useCache = true,
+        onDestroy = () => {}
     }: {
         value: Blob;
         onChangeContent?: (newBuffer: Uint8Array) => void;
         filePath: string;
         lsp_config?: LSPConfig;
+        useCache?: boolean;
+        onDestroy?: () => void;
     } = $props();
     let div_element = $state<HTMLDivElement>();
     let page_api = usePageAPI();
@@ -50,6 +117,7 @@
         if (!div_element) return;
          let ev: codemirror.EditorView | undefined = undefined;
         let cancelled = false;
+        let watcher: Disposable | undefined = undefined;
 
 (async()=>{
         let variant = await tab_context.getBrowserVariant();
@@ -68,18 +136,24 @@
             }
         });
 
-        const extArray = [ul, codemirror.basicSetup];
+        const tabKeymap = keymap.of([{
+            key: "Tab",
+            run: (view) => acceptCompletion(view) || indentMore(view),
+        }]);
+
+        const extArray = [tabKeymap, ...ctrlClickExtension, ul, codemirror.basicSetup,
+            ViewPlugin.fromClass(class { destroy() { onDestroy(); } })];
         if (variant === "dark")
             extArray.push(githubDark);
         else if (variant === "light")
             extArray.push(githubLight)
-        
+
         if (page_api.isEditorReadonly) {
             extArray.push(EditorState.readOnly.of(true));
         }
         // Try to reuse a cached instance for this file path.
 
-        const cached = page_api.codemirrorCache.acquire(filePath);
+        const cached = useCache ? page_api.codemirrorCache.acquire(filePath) : null;
         if (cached) {
             ev = cached.view;
             // Point the stored ref at the current component's callback.
@@ -126,16 +200,31 @@
                 }
 
                 ev = newView;
-                if (newView) page_api.codemirrorCache.store(filePath, newView, callbackRef);
+                if (newView && useCache) page_api.codemirrorCache.store(filePath, newView, callbackRef);
             })();
         }
+
+        const fsp = await page_api.fs;
+        const watcherId = await page_api.watcherId;
+        watcher = await fsp.watchForRefresh(
+            comlink.proxy(async (fsChange) => {
+                if (fsChange.srcId === watcherId) return;
+                if (fsChange.path === filePath) {
+                    const newContent = textdec.decode(await fsp.readFile(filePath));
+                    ev?.dispatch({
+                        changes: { from: 0, to: ev.state.doc.length, insert: newContent },
+                    });
+                }
+            }),
+        );
     })();
         return () => {
             cancelled = true;
+            watcher?.dispose();
             if (ev) {
-                // Detach from DOM and release back to cache to start TTL.
                 ev.dom.remove();
-                page_api.codemirrorCache.release(filePath);
+                if (useCache) page_api.codemirrorCache.release(filePath);
+                else ev.destroy();
             }
         };
     });
@@ -146,5 +235,9 @@
 <style>
     .codemirror-wrapper :global(.cm-editor) {
         height: 100%;
+    }
+    .codemirror-wrapper :global(.cm-ctrl-hover) {
+        text-decoration: underline;
+        cursor: pointer;
     }
 </style>

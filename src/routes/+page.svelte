@@ -23,6 +23,7 @@
             bzImagePath: config.bzimage_path,
             initrdPath: config.initrd_path,
             doNotStartEmulator: config.do_not_start_emulator,
+            disk_version: config.disk_version??"0.0.7"
         }}
     ></FullEditor>
 {:catch}

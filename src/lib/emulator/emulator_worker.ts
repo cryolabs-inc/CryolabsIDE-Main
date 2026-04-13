@@ -441,7 +441,9 @@ async function downloadAndCacheStaticFile(
   console.debug(`[Worker] ${cacheKey} not cached, downloading from ${url}...`);
   await fsP.mkdir(px.dirname(cachePath), { recursive: true });
   await fsP.writeFile(cachePath, new Uint8Array(0));
-  const r = await fetch(url);
+  const r = await fetch(url, {
+    cache: "no-cache"
+  });
   if (!r.ok) throw new Error(`Failed to download ${url}: ${r.status}`);
   const fh = await webfs.get("file", cachePath);
   await r.body!.pipeTo(await fh.createWritable());
@@ -453,13 +455,16 @@ async function readCachedStaticFile(cachePath: string): Promise<ArrayBuffer> {
   const fh = await webfs.get("file", cachePath);
   return (await fh.getFile()).arrayBuffer();
 }
+const kBase_Version = "0.0.1"; // do not change this unless updating everything at once
 
 async function startEmulator(
   getSrvRoot: () => string,
   emulatorConfig?: Record<string, any>,
 ) {
   const v86 = await downloadV86(getSrvRoot);
-  if (!(await localforage.keys()).includes("disk_downloaded")) {
+  const disk_version = emulatorConfig?.["disk_version"] ?? kBase_Version;
+  
+  if (!(await localforage.keys()).includes("disk_downloaded-"+disk_version)) {
     const resolvedDiskPath =
       emulatorConfig?.["diskPath"] ??
       (() => {
@@ -470,14 +475,17 @@ async function startEmulator(
       })();
     console.debug("[Worker] Disk image not cached, downloading from server...");
     try {
-      const r = await fetch(resolvedDiskPath);
+      const r = await fetch(resolvedDiskPath, {cache: "no-store"});
+      
       if (!r.ok) {
         throw new Error("Failed to download disk image.");
       }
-      const b = r.body;
+      
+      const b = r.body!;
       if (!b) {
         throw new Error("Could not retreive response body");
       }
+      
       const reader = b.pipeThrough(new DecompressionStream("gzip")).getReader();
       let off = 0;
       function onProgress(total: number, loaded: number) {
@@ -513,10 +521,10 @@ async function startEmulator(
       // try {
       //     await localforage.setItem("disk_downloaded", diskBuffer);
       // } catch { };
-      await localforage.setItem("disk_downloaded", true);
+      await localforage.setItem("disk_downloaded-"+disk_version, true);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error(message);
+      console.error(e);
       progressGroup.forEach((port) => {
         port.postMessage({ type: "downloadError", message });
       });
@@ -527,12 +535,12 @@ async function startEmulator(
   await downloadAndCacheStaticFile(
     emulatorConfig?.["bzImagePath"] ?? getSrvRoot() + "bzImage",
     "/__cache__/bzImage",
-    "bzimage_cached",
+    "bzimage_cached-"+((emulatorConfig?.['bzImage_version'])??kBase_Version),
   );
   await downloadAndCacheStaticFile(
     emulatorConfig?.["initrdPath"] ?? getSrvRoot() + "initrd",
     "/__cache__/initrd",
-    "initrd_cached",
+    "initrd_cached-"+(emulatorConfig?.['initrd_version']??kBase_Version),
   );
   const bzImageBuffer = await readCachedStaticFile("/__cache__/bzImage");
   const initrdBuffer = await readCachedStaticFile("/__cache__/initrd");
@@ -626,11 +634,15 @@ async function startEmulator(
           });
         },
       });
+      const SERIAL_CHUNK = 4096;
       const ws = new WritableStream<Uint8Array>({
-        write(chunk, controller) {
-          initinstance.bus.send(getWriteTo(0), chunk);
+        async write(chunk) {
+          for (let offset = 0; offset < chunk.byteLength; offset += SERIAL_CHUNK) {
+            initinstance.bus.send(getWriteTo(0), chunk.subarray(offset, offset + SERIAL_CHUNK));
+            await new Promise<void>(resolve => setTimeout(resolve, 10));
+          }
         },
-      });
+      }, new ByteLengthQueuingStrategy({ highWaterMark: SERIAL_CHUNK }));
       connection.Resolve(new ConnectionClient(rs, ws));
       initinstance.remove_listener(getReadFrom(1), _ref);
     });

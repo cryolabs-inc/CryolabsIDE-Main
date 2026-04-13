@@ -55,8 +55,7 @@
         (async () => {
             
             let fsp = await papi.fs;
-            let watcherId = crypto.randomUUID();
-            await fsp.assignId(watcherId);
+            let watcherId = await papi.watcherId;
             watcher = await fsp.watchForRefresh(
                 comlink.proxy(async (fsChange) => {
                     if (fsChange.srcId === watcherId) {

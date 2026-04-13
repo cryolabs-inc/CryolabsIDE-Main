@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     clang \
     clangd \
-    python3 strace libmimalloc2.0 libjemalloc2 vmtouch curl iproute2 udhcpc gnupg gpgv && rm -rf /var/lib/apt/lists/*
-
-
+    python3 strace libmimalloc2.0 libjemalloc2 vmtouch curl iproute2 udhcpc gnupg gpgv wget psmisc procps strace inotify-tools && rm -rf /var/lib/apt/lists/*
+RUN wget -O /opt/jdk.tgz 'https://download.bell-sw.com/java/8u482+10/bellsoft-jdk8u482+10-linux-i586-lite.tar.gz'   && tar -C /opt -xvf /opt/jdk.tgz
 CMD ["/bin/sh"]

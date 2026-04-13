@@ -127,6 +127,7 @@
 
     let papi = $derived(new PageAPI(rc, rootURL));
     setPageAPI(papi);
+    papi.setGlobalVariant("dark");
     let onResize = new Emitter<void>();
     let lowerTab = $state<ResizablePane>();
     let upperTab = $state<ResizablePane>();
@@ -205,7 +206,7 @@
                             fullEditorPrefs.upperTabsHeight = ns;
                         })}
                     >
-                        <Browser bind:this={upperBrowser} target="upper"></Browser>
+                        <Browser bind:this={upperBrowser} target="default"></Browser>
                     </ResizablePane>
                     <ResizableHandle></ResizableHandle>
                     <ResizablePane
