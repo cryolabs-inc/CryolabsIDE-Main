@@ -7,7 +7,7 @@ export interface TabItem {
     objectURL: string;
     clickable: boolean;
     closeable?: boolean;
-    state: "loading"|"none"|"complete";
+    state: "loading"|"none"|"complete"|"unsaved";
     icon?: string;
     closeEvent?: Emitter<void>;
 }

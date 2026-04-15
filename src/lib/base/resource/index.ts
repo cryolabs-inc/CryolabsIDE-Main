@@ -12,6 +12,7 @@ import HtmlViewer from "./viewers/HtmlViewer.svelte";
 import { O_TRUNC } from "@zenfs/core/constants.js";
 import Git from "./viewers/git/Git.svelte";
 import CodemirrorEditor from "./viewers/CodemirrorEditor.svelte";
+import Homepage from "$lib/components/base/panel/contents/Homepage.svelte";
 import * as langCpp from '@codemirror/lang-cpp';
 import SettingsPage from "./viewers/SettingsPage.svelte";
 import { Prefs } from "$lib/base/prefs";
@@ -444,6 +445,63 @@ class SettingsSchemeHandler extends SimpleResourceHandler {
     }
 }
 
+class HomeHandler extends SimpleResourceHandler {
+    async doRetrpanel(_request: Request): Promise<ResourceResponse> {
+        console.log("Hi");
+        return ResourceResponse.ok<[typeof Homepage]>("panel", {
+            component: Homepage,
+            props: {}
+        });
+    }
+}
+export class CreateFileHandler extends SimpleResourceHandler {
+    pageAPI: PageAPI;
+    constructor(pageApi: PageAPI) {
+        super();
+        this.pageAPI = pageApi;
+    }
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+        const pageApi = this.pageAPI;
+        return ResourceResponse.ok<[typeof CodemirrorEditor]>('panel', {
+            component: CodemirrorEditor,
+            props: {
+                tabTitle: "New file",
+                filePath: "/tmp/nf",
+                isNewFile: true,
+                onExplicitSave(ctx, newBuffer) {
+                    const dm = pageApi.dialogManager;
+                    if (!dm) {
+                        throw new Error("No dialog manager!");
+                    }
+                    dm.showFilePicker({
+                        mode: "file",
+                        saveAs: true,
+                        rootDir: pageApi.rootPath,
+                        required: true
+                    }).then((file)=>{
+                        if (!file) {
+                            throw new Error("File required");
+                        }
+                        pageApi.fs.then(async v=>{
+                            console.log(file);
+                        try {
+                            await v.createFile(file);
+                        }catch{}
+                            v.writeFile(file, newBuffer.buffer as ArrayBuffer)
+                                .then(v=>{
+                                    ctx.setTitle(path.basename(file));
+                                    ctx.navigate("file://"+file);
+                                });
+                        })
+                    });
+                },
+                value: new Blob([], {type: /**TODO: Fill thsi out */ ""}),
+                useCache: false
+            }
+        })
+    }
+}
+
 export class LinuxFSHandler extends SimpleResourceHandler {
     #pageAPI: PageAPI;
     #changeEmitters: Map<string, Emitter<Uint8Array>> = new Map();
@@ -605,7 +663,8 @@ export class ResourceManager {
             .registerScheme("sample", new Sample())
             .registerScheme('about', new AboutManager())
             .registerScheme("git", new GitManager())
-            .registerScheme("settings", new SettingsSchemeHandler());
+            .registerScheme("settings", new SettingsSchemeHandler())
+            .registerScheme("home", new HomeHandler());
     }
 }
 

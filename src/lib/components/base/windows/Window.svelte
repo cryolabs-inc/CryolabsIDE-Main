@@ -1,6 +1,7 @@
 <script lang="ts">
     import { getAllContexts, onMount, type ComponentProps, type Snippet } from "svelte";
     import Browser from "../panel/Browser.svelte";
+    import type { BrowserDelegate } from "../panel";
     import { scale } from "svelte/transition";
     import { MaximizeIcon, Minimize2Icon, MinimizeIcon, MinusIcon, XIcon } from "@lucide/svelte";
     import { cn } from "$lib/utils";
@@ -27,8 +28,15 @@
      let px: WProps = $props();
     let b = $state<Browser>();
     let title = $state<string|Snippet<[]>>("Loading...");
+
+    const windowDelegate: BrowserDelegate = {
+        onCloseTab(_tabId) {
+            px.close();
+            return true;
+        },
+    };
+
     onMount(()=>{
-        
         b?.onActiveTabChanged((dat)=>{
             title = dat.name;
         })
@@ -40,7 +48,13 @@
     }
 </script>
 
-<div class={cn(px.class, `relative w-full h-full flex flex-col ${variantClass} bg-background text-foreground`)} in:scale out:scale={{duration: 100}}>
+<div
+    class={cn(px.class, `relative w-full h-full flex flex-col ${variantClass} bg-background text-foreground`)}
+    in:scale out:scale={{duration: 100}}
+    role="dialog"
+    tabindex="-1"
+    onkeydown={(e) => { if (e.key === 'w' && e.ctrlKey && e.altKey) { e.preventDefault(); px.close(); } }}
+>
     <div class="w-full h-[20pt] flex flex-row toolbar-win">
         <button class="hover:text-red-400" onclick={e=>{
             px.close();
@@ -54,6 +68,6 @@
         <div class="justify-self-center pl-4 select-none">asdf</div>
     </div>
     <div class="w-full flex-1 min-h-0 overflow-hidden">
-<Browser bind:this={b} {...px}></Browser>
+<Browser bind:this={b} {...px} delegate={windowDelegate}></Browser>
     </div>
 </div>

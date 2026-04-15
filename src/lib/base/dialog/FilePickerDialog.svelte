@@ -22,6 +22,7 @@
     let treeDataProvider = $state<FT | undefined>(undefined);
     let selectedPath = $state<string | null>(null);
     let selectedIsFile = $state<boolean>(false);
+    let filename = $state<string>("");
 
     function isSelectionValid(path: string | null, isFile: boolean, mode: FilePickerMode = 'both'): boolean {
         if (!path) return false;
@@ -30,7 +31,19 @@
         return true;
     }
 
-    let canConfirm = $derived(isSelectionValid(selectedPath, selectedIsFile, options.mode));
+    let canConfirm = $derived(
+        options.saveAs
+            ? filename.trim().length > 0
+            : isSelectionValid(selectedPath, selectedIsFile, options.mode)
+    );
+
+    function confirmPath(): string | null {
+        if (options.saveAs) {
+            const dir = (selectedPath && !selectedIsFile) ? selectedPath : options.rootDir;
+            return dir + "/" + filename.trim();
+        }
+        return selectedPath;
+    }
 
     onMount(() => {
         (async () => {
@@ -43,9 +56,25 @@
                     return;
                 }
                 const firstPath = [...selectedPaths][0];
-                selectedPath = firstPath;
                 const entry = tdp.allEntries.find(e => e.filePath === firstPath);
-                selectedIsFile = entry ? !!entry.link : false;
+                const isFile = entry ? !!entry.link : false;
+
+                if (options.saveAs) {
+                    if (isFile) {
+                        const lastSlash = firstPath.lastIndexOf('/');
+                        filename = lastSlash >= 0 ? firstPath.slice(lastSlash + 1) : firstPath;
+                        selectedPath = lastSlash > 0 ? firstPath.slice(0, lastSlash) : '/';
+                    } else {
+                        selectedPath = firstPath;
+                    }
+                    selectedIsFile = false;
+                } else {
+                    selectedPath = firstPath;
+                    selectedIsFile = isFile;
+                    if (options.confirmOnClick && isSelectionValid(selectedPath, selectedIsFile, options.mode)) {
+                        onConfirm(selectedPath);
+                    }
+                }
             });
             treeDataProvider = tdp;
         })();
@@ -65,15 +94,27 @@
     {/if}
 </div>
 
-{#if selectedPath}
+{#if options.saveAs}
+    <div class="flex flex-row items-center gap-2 px-1">
+        <span class="text-xs text-muted-foreground shrink-0">File name:</span>
+        <input
+            class="flex-1 text-sm border rounded px-2 py-1 bg-background"
+            type="text"
+            bind:value={filename}
+            placeholder="Enter file name..."
+        />
+    </div>
+{:else if selectedPath}
     <div class="text-xs text-muted-foreground truncate px-1" title={selectedPath}>
         {selectedPath}
     </div>
 {/if}
 
 <DialogFooter>
-    <Button variant="secondary" onclick={onCancel}>Cancel</Button>
-    <Button onclick={() => { if (selectedPath) onConfirm(selectedPath); }} disabled={!canConfirm}>
-        OK
+    {#if !options.required}
+        <Button variant="secondary" onclick={onCancel}>Cancel</Button>
+    {/if}
+    <Button onclick={() => { const p = confirmPath(); if (p) onConfirm(p); }} disabled={!canConfirm}>
+        {options.saveAs ? "Save" : "OK"}
     </Button>
 </DialogFooter>

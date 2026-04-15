@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type ComponentProps, type Snippet } from "svelte";
-  import { setTabContext, type TabContext, type TabContextDelegate } from ".";
+  import { setTabContext, type ContextMenuItemDef, type TabContext, type TabContextDelegate } from ".";
   import Browser from "./Browser.svelte";
   import type { Variants } from "./apis/PageAPI";
   let {
@@ -39,6 +39,12 @@
     }
     get tab_id(): string {
         return this.delegate().tab_id;
+    }
+    close(): void {
+      return this.delegate().closeTab();
+    }
+    setContextMenuItems(items: ContextMenuItemDef[]): void {
+      this.delegate().setContextMenuItems(items);
     }
   }
   setTabContext(new Context(()=>delegate));

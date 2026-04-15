@@ -1,170 +1,215 @@
 <script lang="ts">
-    import { FileHandler, FileTreePanelHandler, LinuxFSHandler, getResourceManager, ResourceResponse, SimpleResourceHandler } from "$lib/base/resource";
-    import { getAllContexts, onMount } from "svelte";
-    import * as comlink from "comlink";
-    import { Emitter } from "$lib/base/events";
-    import type {
-        ExtensionAPI,
-        FSProviderAPI,
-        WorkerHandlerAPI,
-    } from "$lib/emulator/types";
-    import type { TypedEvent } from "$lib/base/events/events";
-    import { usePageAPI } from "../panel/apis/PageAPI";
-    import path from "path-browserify";
-    import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
-    import { getWM } from "../windows/WM";
-    import { getEmulatorPort } from "$lib/emulator/emulator";
-    import StreamTerminalView from "$lib/base/resource/viewers/StreamTerminalView.svelte";
-    import { add_langs } from "$lib/base/monaco";
-    let { onResize, basePath, emulatorConfig}: { onResize: TypedEvent<void>, basePath: string, emulatorConfig?: Record<string, any>} = $props();
-    const resourceManager = getResourceManager();
+  import {
+    FileHandler,
+    FileTreePanelHandler,
+    LinuxFSHandler,
+    getResourceManager,
+    ResourceResponse,
+    SimpleResourceHandler,
+  } from "$lib/base/resource";
+  import { getAllContexts, onMount } from "svelte";
+  import * as comlink from "comlink";
+  import { Emitter } from "$lib/base/events";
+  import type {
+    ExtensionAPI,
+    FSProviderAPI,
+    WorkerHandlerAPI,
+  } from "$lib/emulator/types";
+  import type { TypedEvent } from "$lib/base/events/events";
+  import { usePageAPI } from "../panel/apis/PageAPI";
+  import path from "path-browserify";
+  import TerminalView from "$lib/base/resource/viewers/TerminalView.svelte";
+  import { getWM } from "../windows/WM";
+  import { getEmulatorPort } from "$lib/emulator/emulator";
+  import StreamTerminalView from "$lib/base/resource/viewers/StreamTerminalView.svelte";
+  import { add_langs } from "$lib/base/monaco";
+  import { ConstructPTYUrl } from "$lib/utils";
+  let {
+    onResize,
+    basePath,
+    emulatorConfig,
+  }: {
+    onResize: TypedEvent<void>;
+    basePath: string;
+    emulatorConfig?: Record<string, any>;
+  } = $props();
+  const resourceManager = getResourceManager();
 
-    const papi = usePageAPI();
-    class TerminalScheme extends SimpleResourceHandler {
+  const papi = usePageAPI();
+  class TerminalScheme extends SimpleResourceHandler {
+    async doRetrpanel(request: Request): Promise<ResourceResponse> {
+      let url = new URL(request.url);
+      let termName = path.basename(url.pathname);
+      if (termName === "pty") {
+        console.log("ja");
+        let cmdArgs = url.searchParams.getAll("args");
+        let cmdPath = url.searchParams.get("cmd");
 
-        async doRetrpanel(request: Request): Promise<ResourceResponse> {
-            let url = new URL(request.url);
-            let termName = path.basename(url.pathname);
-            if (termName === "pty") {
-                console.log("ja");
-                let cmdArgs = url.searchParams.getAll("args");
-                let cmdPath = url.searchParams.get('cmd');
-                
-                if (!cmdPath) {
-                    return ResourceResponse.notFound();
-                }
-                return ResourceResponse.ok<[typeof StreamTerminalView]>("panel", {
-                    component: StreamTerminalView,
-                    props: {
-                        args: cmdArgs,
-                        cmd: cmdPath
-                    }
-                });
-            }
-            if (!papi.getTerminal(termName)) {
-                return ResourceResponse.notFound();
-            }
-            
-            return ResourceResponse.ok<[typeof TerminalView]>("panel", {
-                component: TerminalView,
-                props: {
-                    termId: termName,
-                },
-            });
+        if (!cmdPath) {
+          return ResourceResponse.notFound();
         }
+        return ResourceResponse.ok<[typeof StreamTerminalView]>("panel", {
+          component: StreamTerminalView,
+          props: {
+            args: cmdArgs,
+            cmd: cmdPath,
+          },
+        });
+      }
+      if (!papi.getTerminal(termName)) {
+        return ResourceResponse.notFound();
+      }
+
+      return ResourceResponse.ok<[typeof TerminalView]>("panel", {
+        component: TerminalView,
+        props: {
+          termId: termName,
+        },
+      });
     }
-    resourceManager.registerScheme("term", new TerminalScheme());
-    let wm = getWM();
-    onMount(async () => {
-        console.debug("[Emulator] Mounting...");
-        let terminalEmitter = new Emitter<string>();
-        let api = comlink.wrap(await getEmulatorPort(basePath, emulatorConfig)) as WorkerHandlerAPI;
-        let serialPort = new MessageChannel();
-        let downloadNotif: ReturnType<typeof papi.statusBar.addNotification> | undefined;
+  }
+  resourceManager.registerScheme("term", new TerminalScheme());
+  let wm = getWM();
+  onMount(async () => {
+    console.debug("[Emulator] Mounting...");
+    let terminalEmitter = new Emitter<string>();
+    let api = comlink.wrap(
+      await getEmulatorPort(basePath, emulatorConfig),
+    ) as WorkerHandlerAPI;
+    let serialPort = new MessageChannel();
+    let downloadNotif:
+      | ReturnType<typeof papi.statusBar.addNotification>
+      | undefined;
     papi.emulatorStarted.Resolve(!emulatorConfig?.doNotStartEmulator);
 
-        let editorDecision: { resolve: (useMonaco: boolean) => void; promise: Promise<boolean> } = (() => {
-            let resolve!: (useMonaco: boolean) => void;
-            let promise = new Promise<boolean>(r => { resolve = r; });
-            return { resolve, promise };
-        })();
+    let editorDecision: {
+      resolve: (useMonaco: boolean) => void;
+      promise: Promise<boolean>;
+    } = (() => {
+      let resolve!: (useMonaco: boolean) => void;
+      let promise = new Promise<boolean>((r) => {
+        resolve = r;
+      });
+      return { resolve, promise };
+    })();
 
-        serialPort.port1.onmessage = (e) => {
-            let evt = e as MessageEvent<{ type: string; data: string; total?: number; loaded?: number; message?: string }>;
-            if (evt.data.type === "terminalData") {
-                terminalEmitter.emit(evt.data.data);
-            } else if (evt.data.type === "progress") {
-                let total = evt.data.total ?? 0;
-                let loaded = evt.data.loaded ?? 0;
-                let pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-                if (!downloadNotif) {
-                    downloadNotif = papi.statusBar.addNotification({
-                        title: "Downloading disk image",
-                        label: `${pct}% downloaded`,
-                        progress: { progressEmitter: new Emitter() }
-                    });
-                }
-                for (let n of papi.statusBar.notifications) {
-                    if (n.title === "Downloading disk image") {
-                        n.label = `${pct}% (${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB)`;
-                    }
-                }
-                papi.statusBar.onNotificationListChangedEmitter.emit();
-            } else if (evt.data.type === "downloadDone") {
-                if (downloadNotif) {
-                    downloadNotif.dispose();
-                    downloadNotif = undefined;
-                }
-                editorDecision.resolve(false);
-            } else if (evt.data.type === "downloadError") {
-                if (downloadNotif) {
-                    downloadNotif.dispose();
-                    downloadNotif = undefined;
-                }
-                console.warn("[Emulator] Disk download failed, falling back to Monaco editor:", evt.data.message);
-                papi.statusBar.addNotification({
-                    title: "Download failed",
-                    label: evt.data.message ?? "Failed to download disk image. LSP features unavailable.",
-                    kind: "error"
-                });
-                editorDecision.resolve(true);
-                // papi.emitAllLoaded();
-            }
-        };
-        setTimeout(()=>{
-            editorDecision.resolve(false);
-        }, 500);
-        serialPort.port1.start();
-        let fsChan = new MessageChannel();
-        let extensionAPIChannel = new MessageChannel();
-        console.debug("[Emulator] Connecting channels to worker...");
-
-        await api.connect(
-            comlink.transfer(
-                {
-                    fileSystemPort: fsChan.port2,
-                    serialConsolePort: serialPort.port2,
-                    extensionApi: extensionAPIChannel.port2,
-                },
-                [fsChan.port2, serialPort.port2, extensionAPIChannel.port2],
-            ),
+    serialPort.port1.onmessage = (e) => {
+      let evt = e as MessageEvent<{
+        type: string;
+        data: string;
+        total?: number;
+        loaded?: number;
+        message?: string;
+      }>;
+      if (evt.data.type === "terminalData") {
+        terminalEmitter.emit(evt.data.data);
+      } else if (evt.data.type === "progress") {
+        let total = evt.data.total ?? 0;
+        let loaded = evt.data.loaded ?? 0;
+        let pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+        if (!downloadNotif) {
+          downloadNotif = papi.statusBar.addNotification({
+            title: "Downloading disk image",
+            label: `${pct}% downloaded`,
+            progress: { progressEmitter: new Emitter() },
+          });
+        }
+        for (let n of papi.statusBar.notifications) {
+          if (n.title === "Downloading disk image") {
+            n.label = `${pct}% (${(loaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB)`;
+          }
+        }
+        papi.statusBar.onNotificationListChangedEmitter.emit();
+      } else if (evt.data.type === "downloadDone") {
+        if (downloadNotif) {
+          downloadNotif.dispose();
+          downloadNotif = undefined;
+        }
+        editorDecision.resolve(false);
+      } else if (evt.data.type === "downloadError") {
+        if (downloadNotif) {
+          downloadNotif.dispose();
+          downloadNotif = undefined;
+        }
+        console.warn(
+          "[Emulator] Disk download failed, falling back to Monaco editor:",
+          evt.data.message,
         );
-        console.debug("[Emulator] Worker connected, wrapping FS and extension API...");
-        extensionAPIChannel.port1.start();
-        let epapi = comlink.wrap(extensionAPIChannel.port1) as ExtensionAPI;
-
-        let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
-        let useMonaco = await editorDecision.promise;
-        resourceManager.registerScheme("file", new FileHandler(fs, useMonaco, 
-            papi.viewModeMap, papi.fsExtensionMap));
-        resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
-        resourceManager.registerScheme("fs-linux", new LinuxFSHandler(papi));
-        papi.addTerminal("serial0", {
-            textEv: terminalEmitter.event,
-            onResizeNeeded: onResize,
-            write(dat) {
-                serialPort.port1.postMessage({ data: dat });
-            },
+        papi.statusBar.addNotification({
+          title: "Download failed",
+          label:
+            evt.data.message ??
+            "Failed to download disk image. LSP features unavailable.",
+          kind: "error",
         });
+        editorDecision.resolve(true);
+        // papi.emitAllLoaded();
+      }
+    };
+    setTimeout(() => {
+      editorDecision.resolve(false);
+    }, 500);
+    serialPort.port1.start();
+    let fsChan = new MessageChannel();
+    let extensionAPIChannel = new MessageChannel();
+    console.debug("[Emulator] Connecting channels to worker...");
+
+    await api.connect(
+      comlink.transfer(
+        {
+          fileSystemPort: fsChan.port2,
+          serialConsolePort: serialPort.port2,
+          extensionApi: extensionAPIChannel.port2,
+        },
+        [fsChan.port2, serialPort.port2, extensionAPIChannel.port2],
+      ),
+    );
+    console.debug(
+      "[Emulator] Worker connected, wrapping FS and extension API...",
+    );
+    extensionAPIChannel.port1.start();
+    let epapi = comlink.wrap(extensionAPIChannel.port1) as ExtensionAPI;
+
+    let fs = comlink.wrap(fsChan.port1) as FSProviderAPI;
+    let useMonaco = await editorDecision.promise;
+    resourceManager.registerScheme(
+      "file",
+      new FileHandler(fs, useMonaco, papi.viewModeMap, papi.fsExtensionMap),
+    );
+    resourceManager.registerScheme("file-tree", new FileTreePanelHandler(fs));
+    resourceManager.registerScheme("fs-linux", new LinuxFSHandler(papi));
+    papi.addTerminal("serial0", {
+      textEv: terminalEmitter.event,
+      onResizeNeeded: onResize,
+      write(dat) {
+        serialPort.port1.postMessage({ data: dat });
+      },
+    });
 
     papi.fsPromise.Resolve(fs);
     papi.extPromise.Resolve(epapi);
-    console.debug("[Emulator] FS and extension API promises resolved, emulator ready.");
+    console.debug(
+      "[Emulator] FS and extension API promises resolved, emulator ready.",
+    );
     try {
-    await fs.mkdir("/user");
-    await fs.mkdir("/root");
+      await fs.mkdir("/user");
+      await fs.mkdir("/root");
     } catch {
-        // best effort
+      // best effort
     }
     add_langs(papi);
     let usp = new URLSearchParams();
-    let fpath = "/root" + papi.rootPath;
-    usp.append("cmd", "/usr/bin/spawn-in");
-    usp.append("args", fpath);
-    usp.append("args", "/bin/bash");
-    usp.append("args", "-i");
-        papi.openLink("term:///pty?"+usp.toString(), "tabs_lower");
-        papi.emitAllLoaded();
+    const fpath =
+      "/root" + papi.rootPath.startsWith("/user")
+        ? papi.rootPath.slice(5)
+        : papi.rootPath;
 
-    });
+    papi.openLink(
+      ConstructPTYUrl("/bin/bash", ["-i"], fpath, [
+        ["force_color_prompt", "yes"],
+      ]),
+      "tabs_lower",
+    );
+    papi.emitAllLoaded();
+  });
 </script>

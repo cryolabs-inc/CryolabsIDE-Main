@@ -5,6 +5,7 @@
     import { onMount } from "svelte";
     import type { TypedEvent } from "$lib/base/events/events";
     import type { ExtensionAPI } from "$lib/emulator/types";
+  import { getTabContext } from "$lib/components/base/panel";
     let {
         cmd,
         args,
@@ -15,8 +16,8 @@
         onUnload?: TypedEvent<void>;
     } = $props();
 
-    let p = usePageAPI();
-
+    const p = usePageAPI();
+    const tabContext = getTabContext();
     let d = $state<HTMLDivElement>();
     onMount(() => {
         if (!d) return;
@@ -24,9 +25,16 @@
         let addon = new FitAddon();
         term.loadAddon(addon);
         term.open(d);
-let psd: Awaited<ReturnType<ExtensionAPI["openPtyToShell"]>>|undefined = undefined;
+        let psd: Awaited<ReturnType<ExtensionAPI["openPtyToShell"]>>|undefined = undefined;
+        let closeOnExit = false;
+
+        const settingsDisposable = p.onTerminalSettingsChanged((s) => {
+            closeOnExit = s.closeOnExit;
+        });
+
         addon.fit();
         (async () => {
+            closeOnExit = (await p.globalTerminalSettings).closeOnExit;
             let api = await p.ext;
 
            psd  = await api.openPtyToShell(cmd, args);
@@ -64,8 +72,18 @@ let psd: Awaited<ReturnType<ExtensionAPI["openPtyToShell"]>>|undefined = undefin
                 console.log(arg);
                 wrtr.write(arg);
             });
+            psd.wait().then(exitCode => {
+                if (closeOnExit) {
+                    tabContext.close();
+                } else {
+                    const color = exitCode === 0 ? "\x1b[37m" : "\x1b[31m";
+                    term.write(`\r\n${color}Process exited with code ${exitCode}\x1b[0m\r\n`);
+                }
+                psd = undefined;
+            });
         })();
         return () => {
+            settingsDisposable.dispose();
             psd?.kill();
             term.dispose();
         };

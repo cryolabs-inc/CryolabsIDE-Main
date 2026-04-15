@@ -307,7 +307,7 @@ interface WorkerHandlerAPI {
 
 class WorkerHandler implements WorkerHandlerAPI {
   // cid: number = 0;
-  
+  disk_version: ExtendablePromise<string> = ConstructExtendablePromise<string>();
   constructor() {
     // this.cid = 0;
   }
@@ -319,6 +319,7 @@ class WorkerHandler implements WorkerHandlerAPI {
 
     const vmi = await vm_instance.promise;
     console.debug("[Worker] VM instance ready, exposing extension API...");
+    const thiz = this;
     const e: ExtensionAPI = {
       async onReadyCallback(callback) {
         Extendable.promise.then(() => {
@@ -326,7 +327,8 @@ class WorkerHandler implements WorkerHandlerAPI {
         });
       },
       async update(progressCallback: (total: number, loaded: number) => void) {
-        await localforage.removeItem("disk_downloaded");
+        let disk_version_str = await thiz.disk_version.promise;
+        await localforage.removeItem("disk_downloaded-"+disk_version_str);
       },
       async openPtyToShell(cmd: string, args: string[]) {
         const conn = await connection.promise;
@@ -463,7 +465,7 @@ async function startEmulator(
 ) {
   const v86 = await downloadV86(getSrvRoot);
   const disk_version = emulatorConfig?.["disk_version"] ?? kBase_Version;
-  
+  workerHandler.disk_version.Resolve(disk_version);
   if (!(await localforage.keys()).includes("disk_downloaded-"+disk_version)) {
     const resolvedDiskPath =
       emulatorConfig?.["diskPath"] ??

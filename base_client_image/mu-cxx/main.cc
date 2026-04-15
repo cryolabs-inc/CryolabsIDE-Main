@@ -372,53 +372,47 @@ int fid_fd_epoll_handler(int epoll_fd, int epoll_evts, void *user_data) {
     unreg_listener(epoll_fd);
     return 0;
   }
+  bool pipe_closed = false;
   while (true) {
     int ret = read(epoll_fd, buf, sizeof(buf));
     if (ret < 0 && errno == EWOULDBLOCK) {
       break;
     }
-
     if (ret < 0) {
       if (errno == EBADF || (errno == EIO && proc->is_pty)) {
-        uint32_t pipe_to_send = htobe32(proc->self_fid);
-
-        conn_state->data_bytes.clear();
-        conn_state->data_bytes.assign((uint8_t *)&pipe_to_send,
-                                      (uint8_t *)&pipe_to_send +
-                                          sizeof(uint32_t));
-        conn_state->send_data_bytes(conn_state, 0, MSG_PIPECLOSED);
         unreg_listener(epoll_fd);
+        pipe_closed = true;
         break;
       }
-     
       perror("s");
       return -1;
     }
     if (ret == 0) {
       unreg_listener(epoll_fd);
-      conn_state->data_bytes.clear();
-      uint32_t fdat = proc->self_pid;
-      uint32_t pipe_to_send = htobe32(proc->self_fid);
-
-      conn_state->data_bytes.clear();
-      conn_state->data_bytes.assign((uint8_t *)&pipe_to_send,
-                                    (uint8_t *)&pipe_to_send +
-                                        sizeof(uint32_t));
-      conn_state->send_data_bytes(conn_state, 0, MSG_PIPECLOSED);
-      return 0;
+      pipe_closed = true;
+      break;
     }
     full_buffer.insert(full_buffer.end(), buf, buf + ret);
   }
-  // TODO: forward full_buffer as a MSG_FRAME back to the client
-  BufferContext *bctx;
-  new_buffer_context_with_size(&bctx, full_buffer.size() + sizeof(uint32_t));
-  write_u32_be(bctx, proc->self_fid);
-  write_raw_array(bctx, full_buffer.data(), full_buffer.size());
-  conn_state->data_bytes.clear();
-  conn_state->data_bytes.insert(conn_state->data_bytes.end(), bctx->data,
-                                bctx->data + bctx->data_size);
-  conn_state->send_data_bytes(conn_state, 0, MSG_FRAME);
-
+  // Send accumulated data before notifying the pipe is closed
+  if (!full_buffer.empty()) {
+    BufferContext *bctx;
+    new_buffer_context_with_size(&bctx, full_buffer.size() + sizeof(uint32_t));
+    write_u32_be(bctx, proc->self_fid);
+    write_raw_array(bctx, full_buffer.data(), full_buffer.size());
+    conn_state->data_bytes.clear();
+    conn_state->data_bytes.insert(conn_state->data_bytes.end(), bctx->data,
+                                  bctx->data + bctx->data_size);
+    conn_state->send_data_bytes(conn_state, 0, MSG_FRAME);
+    free_buffer_context(bctx, true);
+  }
+  if (pipe_closed) {
+    uint32_t pipe_to_send = htobe32(proc->self_fid);
+    conn_state->data_bytes.clear();
+    conn_state->data_bytes.assign((uint8_t *)&pipe_to_send,
+                                  (uint8_t *)&pipe_to_send + sizeof(uint32_t));
+    conn_state->send_data_bytes(conn_state, 0, MSG_PIPECLOSED);
+  }
   return 0;
 }
 

@@ -51,6 +51,10 @@ export interface FilePickerOptions {
 	title?: string;
 	rootDir: string;
 	mode?: FilePickerMode;
+	confirmOnClick?: boolean;
+	saveAs?: boolean;
+	/** When true, the Cancel button is hidden — the user must make a valid selection. */
+	required?: boolean;
 }
 
 export interface DialogManager {

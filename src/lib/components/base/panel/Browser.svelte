@@ -2,7 +2,8 @@
 
 <script lang="ts">
   import { getResourceManager } from "$lib/base/resource";
-  import { Loader2Icon, SearchIcon, XIcon } from "@lucide/svelte";
+  import { Prefs } from "$lib/base/prefs";
+  import { CircleAlertIcon, CircleDotIcon, Loader2Icon, SearchIcon, XIcon } from "@lucide/svelte";
   import DraggbleItemList from "../items/DraggbleItemList.svelte";
   import { mount, unmount, onMount, type Snippet } from "svelte";
   import { useResourceLinkCtx } from "$lib/base/resourceCtx";
@@ -13,10 +14,17 @@
   import ContextMenuTrigger from "$lib/components/ui/context-menu/context-menu-trigger.svelte";
   import ContextMenuContent from "$lib/components/ui/context-menu/context-menu-content.svelte";
   import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
+  import ContextMenuSeparator from "$lib/components/ui/context-menu/context-menu-separator.svelte";
+  import ContextMenuSub from "$lib/components/ui/context-menu/context-menu-sub.svelte";
+  import ContextMenuSubTrigger from "$lib/components/ui/context-menu/context-menu-sub-trigger.svelte";
+  import ContextMenuSubContent from "$lib/components/ui/context-menu/context-menu-sub-content.svelte";
   import { Emitter } from "$lib/base/events";
-  import type { TabContext as ITabContext, TabContextDelegate } from ".";
+  import type { TabContext as ITabContext, TabContextDelegate, BrowserDelegate, ContextMenuItemDef } from ".";
   import { usePageAPI, type Variants } from "./apis/PageAPI";
   import TabContentsComponent, { type PanelResult } from "./TabContents.svelte";
+  import Tooltip from "$lib/components/ui/tooltip/tooltip.svelte";
+  import TooltipTrigger from "$lib/components/ui/tooltip/tooltip-trigger.svelte";
+  import TooltipContent from "$lib/components/ui/tooltip/tooltip-content.svelte";
 
   export type SerializableTabItem = Omit<TabItem, "closeEvent">;
 
@@ -34,6 +42,7 @@
       state: "loading",
     },
     postTabs,
+    delegate,
   }: {
     postTabs?: Snippet<[() => SerializableTabItem]>;
     target?: string;
@@ -42,6 +51,7 @@
     onNewTab?: () => TabItem;
     tabsDragDisabled?: boolean;
     homepage?: TabItem;
+    delegate?: BrowserDelegate;
   } = $props();
 
   const page_api = usePageAPI();
@@ -179,6 +189,8 @@
     };
   });
 
+  let tabContextMenuItems: Record<string, ContextMenuItemDef[]> = $state({});
+
   let rctx = useResourceLinkCtx();
 
   export function tab_open(
@@ -224,6 +236,14 @@
     } as TabItem;
     items.push(newItem);
     selectedTabItem = newItem.id;
+    if (new URL(link).protocol === "file:") {
+      Prefs.default().get<({ path: string; isDir: boolean } | string)[]>("editor.recentFiles", []).then((recent) => {
+        const filePath = new URL(link).pathname;
+        const normalized = (recent ?? []).map(e => typeof e === "string" ? { path: e, isDir: false } : e);
+        const updated = [{ path: filePath, isDir: false }, ...normalized.filter(e => e.path !== filePath)].slice(0, 20);
+        Prefs.default().store("editor.recentFiles", updated);
+      });
+    }
     return newItem.id;
   }
 
@@ -304,6 +324,24 @@
   export const onActiveTabChanged = activeTabsChanged.event;
   export const onTabListChanged = tabListChanged.event;
 
+  function closeTabById(id: string) {
+    if (delegate?.onCloseTab(id)) return;
+    const tab = items.find((v) => v.id === id);
+    if (!tab) return;
+    tab.closeEvent?.emit();
+    let idx = items.findIndex((v) => v.id === id);
+    if (idx === items.length - 1) idx--;
+    items = items.filter((v) => v.id !== id);
+    setTimeout(() => {
+      if (items.length === 0) return;
+      if (selectedTabItem !== id) {
+        selectedTabItem = selectedTabItem;
+        return;
+      }
+      selectedTabItem = items[Math.max(0, idx)].id;
+    });
+  }
+
   class BrowserTabContext implements ITabContext {
     #id: string;
     async getBrowserVariant() {
@@ -332,6 +370,12 @@
     }
     openTab(link: string): ITabContext | null {
       return openTab(link);
+    }
+    close(): void {
+      closeTabById(this.#id);
+    }
+    setContextMenuItems(items: ContextMenuItemDef[]): void {
+      tabContextMenuItems[this.#id] = items;
     }
   }
 
@@ -379,8 +423,34 @@
     openTab(link: string): ITabContext | null {
       return openTab(link);
     }
+    closeTab(): void {
+      closeTabById(this.tab_id);
+    }
+    setContextMenuItems(items: ContextMenuItemDef[]): void {
+      tabContextMenuItems[this.tab_id] = items;
+    }
   }
 </script>
+
+{#snippet MenuItems(menuItems: ContextMenuItemDef[])}
+  {#each menuItems as item (item.id)}
+    {#if item.separator}
+      <ContextMenuSeparator />
+    {/if}
+    {#if item.children?.length}
+      <ContextMenuSub>
+        <ContextMenuSubTrigger disabled={item.disabled}>{item.label}</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {@render MenuItems(item.children)}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+    {:else}
+      <ContextMenuItem onclick={item.action} disabled={item.disabled}>
+        {item.label}
+      </ContextMenuItem>
+    {/if}
+  {/each}
+{/snippet}
 
 {#snippet Tab(tabItem: TabItem)}
   <ContextMenu>
@@ -392,6 +462,18 @@
           {:else}
             {@render tabItem.name()}
           {/if}
+          {#if tabItem.state === "unsaved"} 
+            <div class="p-0">
+            <Tooltip>
+            <TooltipTrigger>
+              <CircleAlertIcon></CircleAlertIcon>
+              </TooltipTrigger>
+              <TooltipContent>
+                  File is unsaved. Press ctrl-s to save
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          {/if}
           {#if tabItem.state === "loading"}
             <div class="animate-spin">
               <Loader2Icon></Loader2Icon>
@@ -399,34 +481,7 @@
           {/if}
           {#if tabItem.closeable !== false}
             <button
-              onclick={(e) => {
-                tabItem.closeEvent?.emit();
-                let idx = items.findIndex((v) => v.id === tabItem.id);
-                if (idx >= 0 && idx < items.length) {
-                  // don't change
-                }
-                if (idx === items.length - 1) {
-                  // change
-                  idx--;
-                }
-
-                items = items.filter((v) => v.id !== tabItem.id);
-                if (selectedTabItem !== tabItem.id) {
-                  // don't do anything.
-                } else {
-                  // console.log("new sel: " + items[idx].id);
-                }
-                setTimeout(() => {
-                  if (items.length === 0) {
-                    return;
-                  }
-                  if (selectedTabItem !== tabItem.id) {
-                    // don't do anything.
-                    selectedTabItem = selectedTabItem;
-                  }
-                  selectedTabItem = items[idx].id;
-                });
-              }}
+              onclick={() => closeTabById(tabItem.id)}
             >
               <XIcon class="hover:text-red-400 rounded cursor-pointer"></XIcon>
             </button>
@@ -436,6 +491,10 @@
     </ContextMenuTrigger>
     <ContextMenuContent>
       <ContextMenuItem>Drag out to new window</ContextMenuItem>
+      {#if tabContextMenuItems[tabItem.id]?.length}
+        <ContextMenuSeparator />
+        {@render MenuItems(tabContextMenuItems[tabItem.id])}
+      {/if}
     </ContextMenuContent>
   </ContextMenu>
 {/snippet}

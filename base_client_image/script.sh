@@ -17,5 +17,4 @@ sed -i '/tty1/d' /etc/inittab
 rc-update add agetty.ttyS0 default
 cp /mnt/bashrc /etc/bash/bashrc
 cp /mnt/ldr.sh /custom-init
-sed -i '1i export force_color_prompt=yes; cp /etc' /etc/profile
 chmod +x /custom-init

@@ -2,7 +2,7 @@ import { Emitter, type TypedEvent } from "$lib/base/events/events";
 import { TreeItem, type Action, type TreeDataProvider } from "$lib/base/trees/tree";
 import type { PageAPI } from "$lib/components/base/panel/apis/PageAPI";
 import type { FSProviderAPI } from "$lib/emulator/types";
-import { Download, DownloadIcon, FileIcon, FilePlusIcon, FolderPlusIcon, TrashIcon } from "@lucide/svelte";
+import { Download, DownloadIcon, ExternalLinkIcon, FileIcon, FilePlusIcon, FolderPlusIcon, TrashIcon } from "@lucide/svelte";
 import { O_EXCL, S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
 import { DirType } from "@zenfs/core/vfs/dir.js";
 import path from "path-browserify";
@@ -86,6 +86,15 @@ export class FileEntry extends TreeItem {
                     icon: FolderPlusIcon
                 }
             ];
+
+            this.actions.push({
+                callback() {
+                    papi.delegate.openWithRootURI("file://"+filePath);
+                },
+                label: "Open in new window",
+                icon: ExternalLinkIcon,
+                id: "open-in-new-window"
+            });
 
             if (!isRootElement) {
                 this.actions.push({

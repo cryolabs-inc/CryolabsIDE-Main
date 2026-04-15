@@ -42,6 +42,10 @@
 <div {...divParts}>
     <button
         class="cursor-pointer hover:underline border-foreground/80"
+        draggable="true"
+        ondragstart={(e) => {
+            e.dataTransfer?.setData("text", JSON.stringify({ type: "url", url: href }));
+        }}
         onclick={(e) => {
             console.log("Link target: " + target);
             if (isPopup) {

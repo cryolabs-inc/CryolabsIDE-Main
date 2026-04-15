@@ -353,8 +353,42 @@ export class CodemirrorInstanceCache {
 
 type ViewmodeCallback = (request: Request)=>ResourceResponse<any, any>;
 export type Variants = "dark"|"light"
+export interface PageAPIDelegate {
+    openWithRootURI(path: string): void;
+}
+
+export class DefaultPageAPIDelegate implements PageAPIDelegate {
+    openWithRootURI(path: string): void {
+        window.open(location.href + "?url='" + path + "'", "_blank");
+    }
+}
+export interface TerminalSettings {
+    closeOnExit: boolean;
+}
 export class PageAPI {
     variant: Variants = "light";
+    get trimmedRootPath() {
+        let rp = this.rootPath;
+        if (rp.startsWith("/root")) {
+            return rp.slice(5);
+        }
+        return rp;
+    }
+    get globalTerminalSettings(): Promise<TerminalSettings> {
+        return Prefs.default()
+            .get<TerminalSettings>("terminal.settings", {
+                closeOnExit: false 
+            }).then(v=>{
+                return v!;
+            });
+    }
+    #chTerminalSettingsEmitter: Emitter<TerminalSettings> = new Emitter<TerminalSettings>();
+    async setTerminalSettings(newSettings: TerminalSettings): Promise<void> {
+        await Prefs.default()
+            .store("terminal.settings", newSettings);
+        this.#chTerminalSettingsEmitter.emit(newSettings);
+    }
+    onTerminalSettingsChanged = this.#chTerminalSettingsEmitter.event;
     #globalVarChangedEmitter = new Emitter<string>();
     onGlobalVariantChanged: TypedEvent<string> = this.#globalVarChangedEmitter.event;
     setGlobalVariant(nwVariant: typeof this.variant) {
@@ -372,6 +406,7 @@ export class PageAPI {
     async getFromPat(pat: string) {
         return await SrcControlGit.fromPat(await this.fs, pat);
     }
+    delegate: PageAPIDelegate = new DefaultPageAPIDelegate();
     dialogManager: DialogManager | null = null;
     commandRegistry: CommandRegistry | null = null;
     viewModeMap: Map<string, ViewmodeCallback> = new Map();

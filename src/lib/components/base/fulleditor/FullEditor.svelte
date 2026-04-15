@@ -14,7 +14,7 @@
         ResizablePaneGroup,
     } from "$lib/components/ui/resizable";
     import ResizableHandle from "$lib/components/ui/resizable/resizable-handle.svelte";
-    import { ResourceManager, setResourceManager } from "$lib/base/resource";
+    import { CreateFileHandler, ResourceManager, ResourceResponse, setResourceManager } from "$lib/base/resource";
     import { PageAPI, setPageAPI } from "../panel/apis/PageAPI";
     import {
         ResourceLinkContext,
@@ -30,6 +30,7 @@
     import DialogContainer from "$lib/base/dialog/DialogContainer.svelte";
     import CommandPanel from "$lib/base/commands/CommandPanel.svelte";
     import { CommandRegistry, setCommandRegistry } from "$lib/base/commands/CommandRegistry.svelte";
+  import { ConstructPTYUrl } from "$lib/utils";
 
     let { basePath = "/", rootURL, emulatorConfig }: { basePath?: string, rootURL: string, emulatorConfig?: Record<string, any> } = $props();
 
@@ -117,16 +118,58 @@
     let fullEditorPrefs = new FullEditorPrefs();
 
     ResourceManager.addDefaultSchemes(resourceManager);
+    
     setResourceManager(resourceManager);
     let rc = new ResourceLinkContext();
     setResourceLinkCtx(rc);
     const commandRegistry = new CommandRegistry();
+    commandRegistry.register({
+        id: "open-terminal",
+        keybindingHandler(e) {
+            if (e.ctrlKey && e.altKey && e.key.toLowerCase() === "t") {
+                return true;
+            }
+            return false;
+        },
+        label: "Open new terminal",
+        action() {
+            const rootPath = papi.rootPath.startsWith('/user') ? papi.rootPath.slice(5) : papi.rootPath;
+            wm.launchWindow(ConstructPTYUrl("/bin/bash", ["-i"], "/root" + rootPath, [
+                ["force_color_prompt", "yes"],
+            ]));
+        },
+    });
+    commandRegistry.register({
+        id: "open-homepage",
+        label: "Open Homepage",
+        action() {
+            papi.openLink("home:///", "_blank");
+        },
+    });
+    commandRegistry.register({
+        id: "open-file",
+        label: "Open File",
+        async action() {
+            const picked = await papi.showFilePicker({ rootDir: papi.rootPath, title: "Open File", mode: "file", confirmOnClick: true });
+            if (picked) {
+                papi.openLink("file://" + picked, "_blank");
+            }
+        },
+    });
+    commandRegistry.register({
+        id: "create-file",
+        label: "Create File",
+        action() {
+            papi.openLink("create-file:///", "_blank");
+        },
+    });
     setCommandRegistry(commandRegistry);
 
     let diagContainer = $state<DialogContainer>();
 
     let papi = $derived(new PageAPI(rc, rootURL));
     setPageAPI(papi);
+    resourceManager.registerScheme("create-file", new CreateFileHandler(papi));
     papi.setGlobalVariant("dark");
     let onResize = new Emitter<void>();
     let lowerTab = $state<ResizablePane>();
@@ -206,17 +249,21 @@
                             fullEditorPrefs.upperTabsHeight = ns;
                         })}
                     >
-                        <Browser bind:this={upperBrowser} target="default"></Browser>
+                        <Browser bind:this={upperBrowser} target="default" homepage={{
+                            objectURL: "home:///",
+                            id: "default",
+                            name: "Homepage",
+                            state: "loading",
+                            clickable: true
+                        }}></Browser>
                     </ResizablePane>
                     <ResizableHandle></ResizableHandle>
                     <ResizablePane
                         bind:this={lowerTab}
-                        defaultSize={20}
                         onResize={newResizeHandler((newSize) => {
                             fullEditorPrefs.lowerTabsHeight = newSize;
                         })}
-                        minSize={20}
-                        collapsible={true}
+                        
                     >
                         <Browser target="tabs_lower"></Browser>
                     </ResizablePane>

@@ -22,3 +22,13 @@ export function ConstructExtendablePromise<T = void>() {
     }));
     return { promise, Resolve } as ExtendablePromise<T>;
 }
+export function ConstructPTYUrl(cmd: string, args: string[] = [], cwd=".", env: [string, string][] = [])  {
+    const sp = new URLSearchParams();
+    sp.append("cmd", "/usr/bin/spawn-in");
+    sp.append("args", cwd);
+    sp.append("args", "/bin/env");
+    env.forEach(arg=>sp.append("args", `${arg[0]}=${arg[1]}`));
+    sp.append("args", cmd);
+    args.forEach(v=>sp.append("args", v));
+    return `term:///pty?${sp.toString()}`;
+}

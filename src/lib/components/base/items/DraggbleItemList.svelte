@@ -65,7 +65,7 @@
     <div
         class={twMerge(
             "flex flex-col h-full w-full justify-start flex-1",
-            orientation === "horizontal" && "flex-row min-h-4",
+            orientation === "horizontal" && "flex-row",
             c,
         )}
         use:dndzone={{ flipDurationMs: 20, items: items, dragDisabled, ...dndZoneProps }}

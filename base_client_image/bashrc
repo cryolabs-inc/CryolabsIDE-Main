@@ -13,8 +13,8 @@ for f in /etc/bash/*.sh; do
 done
 unset f
 
-# Enable colored prompt
-export PS1=$(echo -ne "\[\033[1;36m\]\u\[\033[1;31m\]@\\[\033[1;32m\]\h:\[\033[1;35m\]\w\[\033[1;31m\]\$\\[\033[0m\] ")
+# Enable colored prompt (red)
+export PS1='\[\033[1;31m\]\u@\h:\w\$\[\033[0m\] '
 
 # Enable colors for ls command
 export LS_OPTS='--color=auto'
