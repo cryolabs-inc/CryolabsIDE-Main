@@ -22,7 +22,8 @@ ls /mnt/root/root.img
 losetup -f /mnt/root/root.img
 ls -l /dev/ | grep "tty"
 ls -l /newroot
-
+/sbin/resize2fs -f /mnt/root/root.img
+/sbin/e2fsck -fy /mnt/root/root.img
 mount -t ext4 /mnt/root/root.img /newroot
 mount --bind /mnt/user /newroot/root
 mount --bind /mnt/root /newroot/mnt

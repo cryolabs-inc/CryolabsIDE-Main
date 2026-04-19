@@ -629,10 +629,22 @@ int handle_start_proc_pty(ConnectionState *conn_state, int message_id,
     return MSG_ERROR;
   };
 
+  struct termios t = {};
+  t.c_iflag = ICRNL | IXON;
+  t.c_oflag = OPOST | ONLCR;
+  t.c_cflag = CS8 | CREAD | HUPCL;
+  t.c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE;
+  t.c_cc[VINTR]  = 0x03;
+  t.c_cc[VSUSP]  = 0x1a;
+  t.c_cc[VQUIT]  = 0x1c;
+  t.c_cc[VEOF]   = 0x04;
+  t.c_cc[VERASE] = 0x7f;
+  t.c_cc[VKILL]  = 0x15;
+
   int pty_fd;
-  int chld = forkpty(&pty_fd, NULL, NULL, NULL);
+  int chld = forkpty(&pty_fd, NULL, &t, NULL);
+
   if (chld == 0) {
-    setsid();
     execvp(process_name.c_str(), (char*const*)argv_ptrs.data());
     perror("execlp");
     _exit(1);
