@@ -5,6 +5,7 @@ depend() {
 }
 
 start() {
+    . /etc/profile.d/java.sh
     ip link set eth0 up
     ip link set lo up
     mkdir /dev/pts

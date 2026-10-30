@@ -1,4 +1,6 @@
 #!/bin/sh
+# Docker ENV is not preserved by disk export; initialize it before starting services.
+. /etc/profile.d/java.sh
 mount -t devtmpfs /dev /dev
 mount -t proc /proc /proc
 mount -t sysfs /sys /sys

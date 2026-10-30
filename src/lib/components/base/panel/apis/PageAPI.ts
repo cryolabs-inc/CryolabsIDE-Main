@@ -165,6 +165,7 @@ class LanguageClients {
         if (!started) return;
         await this.registerConfig("c++", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
         await this.registerConfig("c", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
+        await this.registerConfig("java", "/usr/local/bin/java-language-server");
     }
     async registerConfig(lang_id: string, language_cmd: string, language_cmd_args: string[] = []) {
         this.lang_id_to_registration.set(lang_id, {
@@ -187,6 +188,7 @@ class LanguageClients {
         const language_cmd_args = langRegistration.lang_args;
         if (c) {
             return {
+                lang_id: lang_id === "c++" ? "cpp" : lang_id,
                 lang_extension,
                 client: c
             };
@@ -291,6 +293,7 @@ class LanguageClients {
             const ct = new CryolabsTransport();
             const page_api = this.page_api;
             const lsp_client = new codemirror_lsp.LSPClient({
+                rootUri: new URL("file://" + this.page_api.rootPath.replace(/^\/user(?=\/|$)/, "/root")).href,
                 extensions: [codemirror_lsp.serverDiagnostics()],
                 timeout: 100000,
                 workspace: (client) => {
@@ -306,7 +309,7 @@ class LanguageClients {
             });
             resolve(lsp_client);
         }));
-        return {client: this.lang_id_to_client.get(lang_id)!, lang_extension};
+        return {client: this.lang_id_to_client.get(lang_id)!, lang_id: lang_id === "c++" ? "cpp" : lang_id, lang_extension};
     }
 }
 

@@ -126,18 +126,11 @@
           props: Props;
         }
       : never;
-  interface LSPConfig {
-    lang_id: string;
-    lang_command: string;
-    lang_args: string[];
-    additional_extensions: Extension[];
-  }
   const tabContext = getTabContext();
   let {
     value: value,
     onChangeContent = () => {},
     filePath,
-    lsp_config,
     useCache = true,
     onDestroy = () => {},
     onExplicitSave = (curTabContext: TabContext, _nwVal: Uint8Array) => {},
@@ -150,7 +143,6 @@
     value: Blob;
     onChangeContent?: (newBuffer: Uint8Array) => void;
     filePath: string;
-    lsp_config?: LSPConfig;
     useCache?: boolean;
     onDestroy?: () => void;
   } = $props();
@@ -234,47 +226,27 @@
         extArray.push(EditorState.readOnly.of(true));
       }
       const create = async () => {
-        let newView: codemirror.EditorView | undefined;
-
-        if (!lsp_config) {
-          newView = new codemirror.EditorView({
-            doc: await value.text(),
-            extensions: [...extArray],
-          });
-        } else {
+        const extensions: Extension[] = [...extArray];
+        if (!isNewFile) {
           await page_api.languageClients.defaultRegistered;
-          const lc =
-            await page_api.languageClients.loadLanguageClient(filePath);
-          if (!lc) {
-            //TODO: show error page, language could not be identified
-            console.error("Language could not be identified.");
-            const sl =
-              await page_api.languageClients.identifyLanguageId(filePath);
-            const newExtensions = [];
-            if (sl) newExtensions.push(sl.lang_extension);
-            newView = new codemirror.EditorView({
-              doc: await value.text(),
-              extensions: [...extArray, ...newExtensions],
-            });
+          const languageClient = await page_api.languageClients.loadLanguageClient(filePath);
+          if (languageClient) {
+            const uri = new URL("file://" + filePath.replace(/^\/user(?=\/|$)/, "/root")).href;
+            extensions.push(
+              languageServerSupport(await languageClient.client, uri, languageClient.lang_id),
+              serverCompletion(),
+              languageClient.lang_extension,
+            );
           } else {
-            // console.log([...extArray,  lc.plugin("file:///root"+filePath, lsp_config.lang_id)]);
-            newView = new codemirror.EditorView({
-              doc: await value.text(),
-              extensions: [
-                ...extArray,
-                languageServerSupport(
-                  await lc.client,
-                  "file:///root" + filePath.substring("/user".length),
-                  lsp_config.lang_id,
-                ),
-                serverCompletion(),
-                lc.lang_extension,
-              ],
-            });
+            const language = await page_api.languageClients.identifyLanguageId(filePath);
+            if (language) extensions.push(language.lang_extension);
           }
         }
-
-        return { view: newView!, callbackRef };
+        const view = new codemirror.EditorView({
+          doc: await value.text(),
+          extensions,
+        });
+        return { view, callbackRef };
       };
       const entry = useCache
         ? await page_api.codemirrorCache.getOrCreate(filePath, create)

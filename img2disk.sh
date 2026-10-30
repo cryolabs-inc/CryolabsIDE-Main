@@ -1,3 +1,5 @@
+set -e
+
 DOCKERFILE=$1
 SCRIPT_PATH=$2
 if [[ -n $SCRIPT_PATH ]]
@@ -6,7 +8,7 @@ then
     echo "Using script at $SCRIPT_PATH"
 
 fi
-docker build -t ctf/tmp-emulator-image - < "$DOCKERFILE"
+docker build -t ctf/tmp-emulator-image -f "$DOCKERFILE" "$(dirname "$DOCKERFILE")/.."
 exec 3>&1
 if [[ -n $SCRIPT_PATH ]]
 then
@@ -17,22 +19,22 @@ else
     docker run -d --rm --name tempRE ctf/tmp-emulator-image sleep infinity
 fi
 docker export tempRE -o disk.tar
-truncate -s 1G disk
+truncate -s 1536M disk
 mkdir ext_out
 
 tar -xf  disk.tar -C ext_out
 
 [[ -f ./ext_out/boot/vmlinuz-virt ]] && cp ./ext_out/boot/vmlinuz-virt . 
 [[ -f ./ext_out/boot/initramfs-virt ]] && cp ./ext_out/boot/initramfs-virt . 
-[[ -d ./ext_out/boot ]] && tar -C ext_out/boot -cf boot.tar ext_out/boot  .
+[[ -d ./ext_out/boot ]] && tar -C ext_out/boot -cf boot.tar .
 exec 1>&3
 mkfs.ext4 disk -d ext_out -FF
-rm disk.sqfs
+rm -f disk.sqfs
 #mksquashfs ext_out disk.sqfs
 rm -rf ext_out 
 docker stop -t0 tempRE
 docker rm tempRE || :
 docker image rm ctf/tmp-emulator-image
-rm boot.tar
-rm vmlinuz-virt
-rm initramfs-virt
+rm boot.tar || :
+rm vmlinuz-virt || :
+rm initramfs-virt || :

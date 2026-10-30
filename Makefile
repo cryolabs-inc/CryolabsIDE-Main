@@ -10,5 +10,8 @@ full-site:
 	npm run build;
 	cd build; 7z a ../full-site.zip .;
 
-site:
+site: disk-image
+	cat static/disk | pv | gzip > disk.gz
+	rm static/disk*
 	npm run build
+	mv disk.gz static/disk.gz

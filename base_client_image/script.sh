@@ -7,6 +7,7 @@ chmod +x /usr/bin/spawn-in
 chmod +x /etc/init.d/custom_init
 chsh -s /bin/bash root
 rc-update add custom_init default
+rc-update add iterator default
 ln -s /etc/init.d/agetty /etc/init.d/agetty.ttyS0
 ln -s /etc/init.d/agetty /etc/init.d/agetty.tty1
 mkdir -p /etc/conf.d
