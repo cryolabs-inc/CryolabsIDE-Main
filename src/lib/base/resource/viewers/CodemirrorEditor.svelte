@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { shouldSaveDocument, createFileRefresh } from "./edit/fileSync";
   import { usePageAPI } from "$lib/components/base/panel/apis/PageAPI";
   import * as monaco from "monaco-editor";
   import * as comlink from "comlink";
@@ -164,6 +165,7 @@
     let ev: codemirror.EditorView | undefined = undefined;
     let cancelled = false;
     let watcher: Disposable | undefined = undefined;
+    let refresh: ReturnType<typeof createFileRefresh> | undefined;
     let activation: Disposable | undefined;
     const host = div_element;
     const owner = {};
@@ -172,6 +174,8 @@
     if (tabTitle) tabContext.setTitle(tabTitle);
     if (isNewFile) tabContext.setState("unsaved");
     (async () => {
+      const fsp = await page_api.fs;
+      const watcherId = await page_api.watcherId;
       let variant = await tab_context.getBrowserVariant();
       if (cancelled) return;
 
@@ -183,7 +187,7 @@
       let callbackRef = { fn: onChangeContent, save, language: new Compartment() };
 
       const ul = codemirror.EditorView.updateListener.of(async (viewUpdate) => {
-        if (viewUpdate.docChanged) {
+        if (shouldSaveDocument(viewUpdate)) {
           try {
             const nd = texten.encode(viewUpdate.state.doc.toString());
             callbackRef.fn(nd);
@@ -307,26 +311,23 @@
         },
       ]);
 
-      const fsp = await page_api.fs;
-      const watcherId = await page_api.watcherId;
       if (cancelled) return;
+      refresh = createFileRefresh(ev, async () => textdec.decode(await fsp.readFile(filePath)));
       watcher = await fsp.watchForRefresh(
         comlink.proxy(async (fsChange) => {
-          if (cancelled || fsChange.srcId === watcherId) return;
-          if (fsChange.path === filePath) {
-            const newContent = textdec.decode(await fsp.readFile(filePath));
-            if (cancelled) return;
-            ev?.dispatch({
-              changes: { from: 0, to: ev.state.doc.length, insert: newContent },
-            });
-          }
+          if (cancelled || fsChange.srcId === watcherId || fsChange.path !== filePath) return;
+          await refresh?.refresh();
         }),
       );
       if (cancelled) watcher.dispose();
+      // Subscribe before rereading to cover edits made while this editor was loading.
+      // New files and Linux-only paths may not exist in this filesystem yet.
+      else if (!isNewFile) await refresh.refresh().catch(() => {});
     })();
     return () => {
       cancelled = true;
       watcher?.dispose();
+      refresh?.dispose();
       activation?.dispose();
       if (ev) {
         if (ev.dom.parentElement === host) ev.dom.remove();

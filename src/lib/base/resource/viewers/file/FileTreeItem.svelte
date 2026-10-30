@@ -1,5 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import Mime from "mime";
+    import { FILE_DRAG_TYPE, acceptsFileDrop, dropFiles, startFileDrag, finishFileDrag } from "./fileDrag";
     import { FileEntry, type FT } from "./file";
     import type { TreeDataProvider, TreeItem } from "$lib/base/trees/tree";
     import FileTreeItem from "./FileTreeItem.svelte";
@@ -15,7 +17,6 @@
     import ContextMenuTrigger from "$lib/components/ui/context-menu/context-menu-trigger.svelte";
     import ContextMenuContent from "$lib/components/ui/context-menu/context-menu-content.svelte";
     import { ContextMenuCheckboxItem } from "$lib/components/ui/context-menu";
-    import { S_IFDIR, S_IFMT } from "@zenfs/core/constants.js";
     import path from "path-browserify";
     import ContextMenuItem from "$lib/components/ui/context-menu/context-menu-item.svelte";
     import ContextMenuSeparator from "$lib/components/ui/context-menu/context-menu-separator.svelte";
@@ -58,65 +59,63 @@
             dirs.focus();
         }
     });
-    async function highlightTarget(e: DragEvent) {
-        let elem = wholeDiv;
-        if (elem) {
-            elem.classList.add("dragging-over");
+    let dragOver = $state(false);
+    let dropError = $state<string>();
+    let preparedFile: File | undefined;
+    let prepareVersion = 0;
+    let alive = true;
+    let downloadURL: string | null = null;
+    const dropDirectory = $derived(ftreeItem.link ? path.dirname(ftreeItem.filePath) : ftreeItem.filePath);
 
-        }
-        e.stopImmediatePropagation();
-        e.preventDefault();
-    }
-    async function stopHighlightingTarget(e: DragEvent, force = false) {
-        let elem = wholeDiv;
-        if (!force && elem !== e.currentTarget) {
-            return;
-        }
-        if (elem) {
-            elem.classList.remove("dragging-over");
-        }
-        e.stopImmediatePropagation();
-        e.preventDefault();
-    }
-    async function droppedFile(nwPath: string, e: DragEvent) {
-        if (!e.dataTransfer) {
-            return;
-        }
-        e.stopPropagation();
-        stopHighlightingTarget(e, true);
-        
-        (e.target as HTMLElement).classList.remove("dragging-over");
-        if (e.dataTransfer.files.length > 0) {
-            let firstFile = e.dataTransfer.files[0];
-            let firstArr = new Uint8Array(await firstFile.arrayBuffer());
-            await tdp.fsApi.writeFile(path.join(ftreeItem.filePath, firstFile.name), comlink.transfer(firstArr.buffer, [firstArr.buffer]))
-        }
-        let dat = e.dataTransfer.getData("text");
-        if (dat) {
-            let d = JSON.parse(dat) as {
-                type: "url";
-                url: string
-            };
-            let pathRetrieved = new URL(d.url).pathname;
-            if (pathRetrieved) {
-                
-                let st = await tdp.fsApi.stat(nwPath);
-                if ((st.mode & S_IFMT) === S_IFDIR) {
-                    nwPath = path.join(nwPath, path.basename(pathRetrieved));
-                }
-                tdp.fsApi.renameEntry(pathRetrieved, nwPath);
-                // we will mvoe from path a to path b.
+    async function prepareFile() {
+        if (!ftreeItem.link) return;
+        const version = ++prepareVersion;
+        preparedFile = undefined;
+        try {
+            const blob = await tdp.fsApi.readLargeFile(ftreeItem.filePath);
+            if (alive && version === prepareVersion) {
+                preparedFile = new File([blob], path.basename(ftreeItem.filePath), {
+                    type: Mime.getType(ftreeItem.filePath) || "application/octet-stream",
+                    lastModified: blob.lastModified,
+                });
             }
+        } catch {
+            // Internal moves remain available if the file cannot be exported.
         }
     }
-    function isTargetCandidate(e: DragEvent) {
-        if (
-            e.target instanceof HTMLDivElement &&
-            e.target.getAttribute("data-isFileDropZone")
-        ) {
-            return true;
+    function beginDrag(e: DragEvent) {
+        if (!e.dataTransfer || isRenaming) return;
+        e.stopPropagation();
+        finishDrag();
+        downloadURL = startFileDrag(e.dataTransfer, ftreeItem.filePath, preparedFile);
+    }
+    function finishDrag() {
+        finishFileDrag(downloadURL);
+        downloadURL = null;
+        dragOver = false;
+    }
+    function dragOverFolder(e: DragEvent) {
+        if (!e.dataTransfer || !acceptsFileDrop(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = e.dataTransfer.types.includes(FILE_DRAG_TYPE) ? "move" : "copy";
+        dragOver = true;
+    }
+    function leaveFolder(e: DragEvent) {
+        if (e.relatedTarget instanceof Node && (e.currentTarget as HTMLElement).contains(e.relatedTarget)) return;
+        dragOver = false;
+    }
+    async function droppedFile(e: DragEvent) {
+        if (!e.dataTransfer || !acceptsFileDrop(e.dataTransfer)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        dragOver = false;
+        dropError = undefined;
+        try {
+            await dropFiles(e.dataTransfer, dropDirectory, tdp.fsApi);
+        } catch (error) {
+            dropError = error instanceof Error ? error.message : String(error);
         }
-        return false;
     }
     let isRenaming = $state<boolean>(false);
     async function onFinishedRenaming(newValue: string) {
@@ -127,8 +126,9 @@
     onMount(() => {
         // Register this entry for range selection
         tdp.registerEntry(ftreeItem, visualIndex);
+        void prepareFile();
 
-        tdp.onStateShouldChange(({path, state})=>{
+        const stateSubscription = tdp.onStateShouldChange(({path, state})=>{
             if (path === ftreeItem.filePath) {
                 if (state === "rename") {
                     isRenaming = true;
@@ -136,7 +136,7 @@
             }
         });
 
-        tdp.onSelected(({selectedPaths})=>{
+        const selectionSubscription = tdp.onSelected(({selectedPaths})=>{
             isSelected = selectedPaths.has(ftreeItem.filePath);
         });
 
@@ -145,20 +145,27 @@
             try {
             let interm = await tdp.getChildren(ftreeItem);
             
-            if (!interm) return;
-            childrenTreeItems = interm.slice().sort((a, b)=>{return a.prio - b.prio}) as FileEntry[];
+            if (interm) childrenTreeItems = interm.slice().sort((a, b)=>{return a.prio - b.prio}) as FileEntry[];
             disp = await tdp.fsApi.watchForRefresh(
                 comlink.proxy(async (fsc) => {
+                    if (!alive) return;
+                    if (ftreeItem.link && fsc.path === ftreeItem.filePath) void prepareFile();
                     if (fsc.isEntryChange && fsc.path === ftreeItem.filePath) {
                         childrenTreeItems = await tdp.getChildren(ftreeItem);
                     }
                 }),
             );
+            if (!alive) disp.dispose();
             } catch (E) {
                 err = "Unable to read directory. <br /> Possible causes: Directory might not exist, or requested view pointed to a file."
             }
         })();
         return () => {
+            alive = false;
+            preparedFile = undefined;
+            finishDrag();
+            stateSubscription.dispose();
+            selectionSubscription.dispose();
             tdp.unregisterEntry(ftreeItem);
             if (disp) {
                 disp.dispose();
@@ -172,7 +179,6 @@
             tdp.registerEntry(ftreeItem, visualIndex);
         }
     });
-    let wholeDiv = $state<HTMLDivElement>();
 </script>
 
 {#snippet childrenLst()}
@@ -203,7 +209,11 @@
 
 {#snippet entry()}
     <div
-        class={cn(isRootDir && "text-lg font-bold ")}
+        class={cn(isRootDir && "text-lg font-bold ", dragOver && "bg-accent text-accent-foreground outline outline-1 outline-primary")}
+        role="group"
+        ondragover={dragOverFolder}
+        ondragleave={leaveFolder}
+        ondrop={droppedFile}
         style={`padding-left: ${level * 20}px`}
     >
         {#if isRenaming}
@@ -262,15 +272,8 @@
                     {#if ftreeItem.link}
                         <Link
                             role="directory"
-                            ondragstart={async (e) => {
-                                e.dataTransfer?.setData(
-                                    "text",
-                                    JSON.stringify({
-                                        type:  "url",
-                                        url: `file://${ftreeItem.filePath}`
-                                    }),
-                                );
-                            }}
+                            ondragstart={beginDrag}
+                            ondragend={finishDrag}
                             draggable={!isRenaming}
                             href={ftreeItem.link.href}
                             target={ftreeItem.link.target}
@@ -282,18 +285,8 @@
                             role="directory"
                             draggable={!isRenaming}
 
-                            ondragstart={(e) => {
-                                if (!e.dataTransfer) return;
-                                if (e.target instanceof HTMLDivElement) {
-                                    e.dataTransfer.setData(
-                                        "text",
-                                        JSON.stringify({
-                                            type: "url",
-                                            url: new URL(`file://${ftreeItem.filePath}`)
-                                        }),
-                                    );
-                                }
-                            }}
+                            ondragstart={beginDrag}
+                            ondragend={finishDrag}
 
                         >
                             {label}
@@ -325,27 +318,6 @@
                         {/each}
                     </div>
             </div>
-            <!-- {#if ftreeItem.actions}
-                {#each ftreeItem.actions as act (act.label)}
-                    <div
-                        role="directory"
-                        draggable
-                        class="group-hover:text-green-400"
-                        data-action={act.id}
-                        ondragstart={(e) => {
-                            e.dataTransfer?.setData(
-                                "text",
-                                (e.target as HTMLDivElement).getAttribute(
-                                    "data-action",
-                                )!,
-                            );
-                        }}
-                    >
-                        <act.icon {...act.props}></act.icon>
-                    </div>
-                {/each}
-            {/if} -->
-            
         </button>
         {/if}
     </div>
@@ -354,10 +326,12 @@
 {#if err!=null}
 <div>{@html err}</div>
 {:else}
-<div bind:this={wholeDiv} ondrop={droppedFile.bind(null, ftreeItem.filePath)} role="directory" ondragover={e=>{
-    
+<div ondrop={droppedFile} role="group" ondragover={(e) => {
+    if (!e.dataTransfer || !acceptsFileDrop(e.dataTransfer)) return;
     e.preventDefault();
-}} ondragenter={highlightTarget} ondragleave={stopHighlightingTarget}>
+    e.stopPropagation();
+}}>
+    {#if dropError}<p role="alert" class="text-destructive text-sm px-2">{dropError}</p>{/if}
     <ContextMenu>
         <ContextMenuTrigger>
             {#if childrenTreeItems !== null}

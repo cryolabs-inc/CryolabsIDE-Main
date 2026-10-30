@@ -1,3 +1,4 @@
+import { applyFileContent, saveFileContent } from "./viewers/edit/fileSync";
 import { createContext, type Component, type ComponentProps } from "svelte";
 import RawTextViewer from "./viewers/RawTextViewer.svelte";
 import MonacoEditor from "./viewers/MonacoEditor.svelte";
@@ -9,7 +10,6 @@ import type { FSProviderAPI } from '$lib/emulator/types';
 import { type PageAPI } from '$lib/components/base/panel/apis/PageAPI';
 import FileTreeViewer from "./viewers/file/FileTreeViewer.svelte";
 import HtmlViewer from "./viewers/HtmlViewer.svelte";
-import { O_TRUNC } from "@zenfs/core/constants.js";
 import Git from "./viewers/git/Git.svelte";
 import CodemirrorEditor from "./viewers/CodemirrorEditor.svelte";
 import Homepage from "$lib/components/base/panel/contents/Homepage.svelte";
@@ -296,10 +296,7 @@ export class FileHandler extends SimpleResourceHandler {
         if ((getRequest.status >= 200 && getRequest.status < 300) && getRequest.resource && getRequest.resource.type === "data" && getRequest.resource.data.data) {
             const filePath = this.getPathnameFromRequest(request);
             const value = getRequest.resource.data.data;
-            const onChangeContent = async (newC: Uint8Array) => {
-                await fsP.writeFile(filePath, newC.buffer as ArrayBuffer, newC.length, 0, O_TRUNC);
-                await fsP.truncate(filePath, newC.byteLength);
-            };
+            const onChangeContent = (newC: Uint8Array) => saveFileContent(fsP, filePath, newC);
             for (let [regEx, callback] of this.extensionModeMap) {
                 if (regEx.test(filePath)) {
                     const ret = callback(request);
@@ -578,9 +575,7 @@ export class LinuxFSHandler extends SimpleResourceHandler {
                 if (cached) {
                     const newText = new TextDecoder().decode(newContent);
                     const view = cached.view;
-                    view.dispatch({
-                        changes: { from: 0, to: view.state.doc.length, insert: newText }
-                    });
+                    applyFileContent(view, newText);
                 }
             }
             this.#watchers.delete(filePath);
