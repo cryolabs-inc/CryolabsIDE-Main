@@ -30,7 +30,7 @@ class WebAccess2 extends WebAccessFS {
         this.index.fromJSON(jso);
     }
     async saveIndex() {
-        navigator.locks.request("nlock-fs", {mode: "exclusive"}, (async()=>{
+        await navigator.locks.request("nlock-fs", {mode: "exclusive"}, (async()=>{
             const jsString = JSON.stringify(this.index.toJSON());
             
         const writable = await this.idxHandle.createWritable({keepExistingData: false});
@@ -98,10 +98,7 @@ class WebAccess2 extends WebAccessFS {
 const int  = new WebAccess2(await rot.getDirectoryHandle("f1", {create: true}), await rot.getFileHandle('index', {create: true}));
 await int.initialize(); 
 async function saveIndex() {
-    const idx = await rot.getFileHandle('index', {create: true});
-    const writable = await idx.createWritable({keepExistingData: false});
-    await writable.write(JSON.stringify(int.index));
-    await writable.close();
+    await int.saveIndex();
 }
 async function destroyIndex() {
     await rot.removeEntry('index', {recursive: false});

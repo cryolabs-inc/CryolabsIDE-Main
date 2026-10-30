@@ -1,6 +1,7 @@
 <svelte:options runes />
 
 <script lang="ts">
+  import { findExistingFileTab } from "./fileTabs";
   import { getResourceManager } from "$lib/base/resource";
   import { Prefs } from "$lib/base/prefs";
   import { CircleAlertIcon, CircleDotIcon, Loader2Icon, SearchIcon, XIcon } from "@lucide/svelte";
@@ -225,6 +226,12 @@
       items[seledIdx] = seled;
       return;
     }
+    // File links should select the existing tab, including programmatic opens.
+    const existingFileTab = findExistingFileTab(items, link);
+    if (existingFileTab) {
+      selectedTabItem = existingFileTab.id;
+      return existingFileTab.id;
+    }
     let closeEvent = new Emitter<void>();
     let newItem = {
       id: crypto.randomUUID(),
@@ -344,6 +351,11 @@
 
   class BrowserTabContext implements ITabContext {
     #id: string;
+    onActivate(listener: () => void) {
+      return activeTabsChanged.event((tab) => {
+        if (tab?.id === this.tab_id) listener();
+      });
+    }
     async getBrowserVariant() {
       return variant;
     }
@@ -393,6 +405,11 @@
   }
 
   class TCD implements TabContextDelegate {
+    onActivate(listener: () => void) {
+      return activeTabsChanged.event((tab) => {
+        if (tab?.id === this.tab_id) listener();
+      });
+    }
     async getBrowserVariant(): Promise<Variants> {
       return variant;
     }

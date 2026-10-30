@@ -11,6 +11,9 @@
     children: Snippet;
   } = $props();
   class Context implements TabContext {
+    onActivate(listener: () => void) {
+      return this.delegate().onActivate?.(listener) ?? { dispose() {} };
+    }
     async getBrowserVariant(): Promise<Variants> {
       return (await this.delegate()
         .getBrowserVariant()) ?? "light";

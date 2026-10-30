@@ -164,14 +164,23 @@
     let ev: codemirror.EditorView | undefined = undefined;
     let cancelled = false;
     let watcher: Disposable | undefined = undefined;
+    let activation: Disposable | undefined;
+    const host = div_element;
+    const owner = {};
+    let attach = () => {};
+    activation = tab_context.onActivate?.(() => attach());
     if (tabTitle) tabContext.setTitle(tabTitle);
     if (isNewFile) tabContext.setState("unsaved");
     (async () => {
       let variant = await tab_context.getBrowserVariant();
+      if (cancelled) return;
 
       // Mutable ref so the stored update listener always calls the current callback,
       // even after the view is remounted with a different onChangeContent prop.
-      const callbackRef = { fn: onChangeContent };
+      const save = (view: codemirror.EditorView) => {
+        onExplicitSave(tabContext, texten.encode(view.state.doc.toString()));
+      };
+      let callbackRef = { fn: onChangeContent, save, language: new Compartment() };
 
       const ul = codemirror.EditorView.updateListener.of(async (viewUpdate) => {
         if (viewUpdate.docChanged) {
@@ -192,15 +201,12 @@
         {
           key: "Mod-s",
           run: (view) => {
-            const encoded = texten.encode(view.state.doc.toString());
-            onExplicitSave(tabContext, encoded);
-            // Add your save logic here
-
+            callbackRef.save(view);
             return true; // Prevents default browser save dialog
           },
         },
       ]);
-      const langCompartment = new Compartment();
+      const langCompartment = callbackRef.language;
 
       const extArray = [
         saveShortcut,
@@ -223,71 +229,68 @@
       if (page_api.isEditorReadonly) {
         extArray.push(EditorState.readOnly.of(true));
       }
-      // Try to reuse a cached instance for this file path.
+      const create = async () => {
+        let newView: codemirror.EditorView | undefined;
 
-      const cached = useCache
-        ? page_api.codemirrorCache.acquire(filePath)
-        : null;
-      if (cached) {
-        ev = cached.view;
-        // Point the stored ref at the current component's callback.
-        cached.callbackRef.fn = onChangeContent;
-        div_element.appendChild(ev.dom);
-      } else {
-        await (async () => {
-          let newView: codemirror.EditorView | undefined;
-
-          if (!lsp_config) {
+        if (!lsp_config) {
+          newView = new codemirror.EditorView({
+            doc: await value.text(),
+            extensions: [...extArray],
+          });
+        } else {
+          await page_api.languageClients.defaultRegistered;
+          const lc =
+            await page_api.languageClients.loadLanguageClient(filePath);
+          if (!lc) {
+            //TODO: show error page, language could not be identified
+            console.error("Language could not be identified.");
+            const sl =
+              await page_api.languageClients.identifyLanguageId(filePath);
+            const newExtensions = [];
+            if (sl) newExtensions.push(sl.lang_extension);
             newView = new codemirror.EditorView({
-              parent: div_element,
               doc: await value.text(),
-              extensions: [...extArray],
+              extensions: [...extArray, ...newExtensions],
             });
           } else {
-            await page_api.languageClients.defaultRegistered;
-            const lc =
-              await page_api.languageClients.loadLanguageClient(filePath);
-            if (!lc) {
-              //TODO: show error page, language could not be identified
-              console.error("Language could not be identified.");
-              const sl =
-                await page_api.languageClients.identifyLanguageId(filePath);
-              const newExtensions = [];
-              if (sl) newExtensions.push(sl.lang_extension);
-              newView = new codemirror.EditorView({
-                parent: div_element,
-                doc: await value.text(),
-                extensions: [...extArray, ...newExtensions],
-              });
-            } else {
-              // console.log([...extArray,  lc.plugin("file:///root"+filePath, lsp_config.lang_id)]);
-              newView = new codemirror.EditorView({
-                parent: div_element,
-                doc: await value.text(),
-                extensions: [
-                  ...extArray,
-                  languageServerSupport(
-                    await lc.client,
-                    "file:///root" + filePath.substring("/user".length),
-                    lsp_config.lang_id,
-                  ),
-                  serverCompletion(),
-                  lc.lang_extension,
-                ],
-              });
-            }
+            // console.log([...extArray,  lc.plugin("file:///root"+filePath, lsp_config.lang_id)]);
+            newView = new codemirror.EditorView({
+              doc: await value.text(),
+              extensions: [
+                ...extArray,
+                languageServerSupport(
+                  await lc.client,
+                  "file:///root" + filePath.substring("/user".length),
+                  lsp_config.lang_id,
+                ),
+                serverCompletion(),
+                lc.lang_extension,
+              ],
+            });
           }
+        }
 
-          if (cancelled) {
-            newView?.destroy();
-            return;
-          }
-
-          ev = newView;
-          if (newView && useCache)
-            page_api.codemirrorCache.store(filePath, newView, callbackRef);
-        })();
+        return { view: newView!, callbackRef };
+      };
+      const entry = useCache
+        ? await page_api.codemirrorCache.getOrCreate(filePath, create)
+        : await create();
+      if (cancelled) {
+        if (!useCache) entry.view.destroy();
+        return;
       }
+      ev = entry.view;
+      callbackRef = entry.callbackRef;
+      if (useCache) page_api.codemirrorCache.retain(filePath, owner);
+      attach = () => {
+        if (cancelled || !ev) return;
+        callbackRef.fn = onChangeContent;
+        callbackRef.save = save;
+        host.appendChild(ev.dom);
+        ev.requestMeasure();
+      };
+      // A background load must not take the view away from the visible tab.
+      if (host.isConnected) attach();
 
       tab_context.setContextMenuItems([
         {
@@ -298,7 +301,7 @@
             label: lang.name,
             async action() {
               const loaded = await lang.load();
-              ev?.dispatch({ effects: langCompartment.reconfigure(loaded.extension) });
+              ev?.dispatch({ effects: callbackRef.language.reconfigure(loaded.extension) });
             },
           })),
         },
@@ -306,24 +309,28 @@
 
       const fsp = await page_api.fs;
       const watcherId = await page_api.watcherId;
+      if (cancelled) return;
       watcher = await fsp.watchForRefresh(
         comlink.proxy(async (fsChange) => {
-          if (fsChange.srcId === watcherId) return;
+          if (cancelled || fsChange.srcId === watcherId) return;
           if (fsChange.path === filePath) {
             const newContent = textdec.decode(await fsp.readFile(filePath));
+            if (cancelled) return;
             ev?.dispatch({
               changes: { from: 0, to: ev.state.doc.length, insert: newContent },
             });
           }
         }),
       );
+      if (cancelled) watcher.dispose();
     })();
     return () => {
       cancelled = true;
       watcher?.dispose();
+      activation?.dispose();
       if (ev) {
-        ev.dom.remove();
-        if (useCache) page_api.codemirrorCache.release(filePath);
+        if (ev.dom.parentElement === host) ev.dom.remove();
+        if (useCache) page_api.codemirrorCache.release(filePath, owner);
         else ev.destroy();
       }
     };

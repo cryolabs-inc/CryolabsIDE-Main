@@ -1,3 +1,4 @@
+import type { Disposable } from "$lib/base/disposable";
 import type { Browser } from "$lib";
 import { createContext, type ComponentProps } from "svelte";
 import type { Variants } from "./apis/PageAPI";
@@ -19,6 +20,7 @@ export interface BrowserDelegate {
 }
 
 export interface TabContextDelegate {
+    onActivate?(listener: () => void): Disposable;
     updateOwnURL(newURL: string): Promise<void>;
     updateOwnTitle(title: string): void;
     updateOwnIcon(icon: string | undefined): void;
@@ -31,6 +33,7 @@ export interface TabContextDelegate {
     getBrowserVariant(): Promise<NonNullable<Variants>>;
 }
 export interface TabContext {
+    onActivate?(listener: () => void): Disposable;
     getBrowserVariant(): Promise<NonNullable<Variants>>;
     navigate(newURL: string): Promise<void>;
     setTitle(title: string): void;

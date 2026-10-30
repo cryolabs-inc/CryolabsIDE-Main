@@ -8,20 +8,18 @@ Object.defineProperty(globalThis, "process", { value: undefined });
 import * as comlink from "comlink";
 import { ConnectionClient } from "./connection_clientv2.mts";
 import { Emitter } from "$lib/base/events";
-import { fs, fsP, saveIndex, webfs } from "$lib/base/fs";
+import { fs, fsP, webfs } from "$lib/base/fs";
 import type {
   ConnectParams,
   ExtensionAPI,
   FSDirent,
   FSProviderAPI,
-  ShellAPI,
 } from "./types";
 import px from "path-browserify";
-import { Errno, withErrno } from "kerium";
 import { getHandler } from "$lib/base/fs/p9handler";
 import type { Disposable } from "$lib/base/disposable";
 import type { FSChange } from "$lib/base/fs/changes";
-import { O_CREAT, O_EXCL, O_RDWR, O_TRUNC } from "@zenfs/core/constants.js";
+import { FileSystemRouter } from "$lib/base/fs/router";
 const basePath = "/";
 const vm_instance = ConstructExtendablePromise<any>();
 
@@ -45,6 +43,7 @@ function receiveMsgpackMessage(
   onClose: () => void,
 ) {}
 const globChEmitter = new Emitter<FSChange>();
+const fsRouter = new FileSystemRouter(globChEmitter);
 const connection: ExtendablePromise<ConnectionClient> =
   ConstructExtendablePromise();
 interface ExtendablePromise<T> {
@@ -60,211 +59,68 @@ function ConstructExtendablePromise<T>() {
 }
 let progressGroup: MessagePort[] = [];
 class FSProviderInternalImpl implements FSProviderAPI {
-  fs9p: any;
   assignedId?: string;
-  async renameEntry(oldPath: string, newPath: string): Promise<void> {
-    const newParent = px.dirname(newPath);
-    const oldParent = px.dirname(oldPath);
-    await fsP.rename(oldPath, newPath);
-    await this.emitGlobal(newParent, "rename", true);
-    await this.emitGlobal(oldParent, "rename", true);
-  }
-  async watchForRefresh(
-    refreshCb: (fsChange: FSChange) => void,
-  ): Promise<Disposable> {
-    const d = globChEmitter.event(refreshCb);
-    return comlink.proxy({
-      dispose() {
-        d.dispose();
-      },
-    });
-  }
-  async disposeWatcher() {}
-  private normalizeLockPath(targetPath: string): string {
-    // Normalize path for consistent locking (remove trailing slashes, resolve ..)
-    return targetPath.replace(/\/+$/, "") || "/";
+
+  private route<T>(operation: () => Promise<T>): Promise<T> {
+    return fsRouter.run(operation, this.assignedId);
   }
 
-  async withLock<T>(
-    targetPath: string,
-    func: (...args: any[]) => T,
-  ): Promise<T> {
-    const lockName = `fs-lock:${this.normalizeLockPath(targetPath)}`;
-    return navigator.locks.request(lockName, async (_) => {
-      return await func();
-    });
-  }
-
-  constructor() {
-    // this.fs9p = fsOpfs;
-  }
-  readdir(path: string): Promise<string[]> {
-    return this.readDirectory(path);
-  }
-
-  async readFile(
-    path: string,
-    length?: number,
-    position?: number,
-  ): Promise<Uint8Array> {
-    return this.withLock(path, async () => {
-      const st = await fsP.stat(path);
-      if (st.isDirectory()) {
-        throw Errno.EISDIR;
-      }
-      const result = new Uint8Array(length ?? st.size);
-
-      const fh = await fsP.open(path, fsP.constants.O_RDWR);
-      const r = await fh.read(result, 0, result.length, position);
-      await fh.close();
-      return r.buffer.subarray(0, r.bytesRead);
-    });
-  }
   async assignId(id: string) {
     this.assignedId = id;
   }
   id() {
     return this.assignedId;
   }
-  async emitGlobal(
-    path: string,
-    method: string,
-    isEntryChange: boolean = false,
-  ) {
-    saveIndex();
-    globChEmitter.emit({ path, method, isEntryChange, srcId: this.assignedId });
+  async watchForRefresh(refreshCb: (fsChange: FSChange) => void): Promise<Disposable> {
+    const watcher = globChEmitter.event(refreshCb);
+    return comlink.proxy({ dispose: () => watcher.dispose() });
   }
-  async writeFile(
-    path: string,
-    data: ArrayBuffer,
-    length: number,
-    position: number,
-    openMode = fsP.constants.O_TRUNC,
-  ): Promise<number> {
-    let isNewEntry = false;
-    try {
-      await fsP.stat(path);
-    } catch {
-      isNewEntry = true;
-    }
-    return this.withLock(path, async () => {
-      length ??= data.byteLength;
-      position ??= 0;
-      const fh = await webfs.get("file", path);
-      let wrtr = await fh.createWritable({keepExistingData: true});
-      await wrtr.write({
-        data,
-        position: position??0,
-        size: length,
-        type: "write"
-      } as WriteParams);
-      await wrtr.close();
-      if (openMode & fsP.constants.O_TRUNC) {
-        await this.truncateInternal(path, length); // avoid deadlock
-      }
-      this.emitGlobal(path, "write", isNewEntry);
+  async disposeWatcher() {}
 
-      return length;
-    });
+  renameEntry(oldPath: string, newPath: string): Promise<void> {
+    return this.route(() => fsRouter.rename(oldPath, newPath));
   }
-
-  async readLargeFile(p: string): Promise<File> {
-    return this.withLock(p, async () => {
-      try {
-        return await (await webfs.get("file", p)).getFile();
-      } catch (E) {
-        console.error("failed to retr file.");
-        throw E;
-      }
-    });
+  readFile(path: string, length?: number, position?: number): Promise<Uint8Array> {
+    return this.route(() => fsRouter.readFile(path, length, position));
   }
-
-  async stat(path: string): Promise<fs.Stats> {
-    return this.withLock(path, async () => await fsP.stat(path));
+  writeFile(path: string, data: ArrayBuffer, length?: number, position?: number, openMode?: number): Promise<number> {
+    return this.route(() => fsRouter.writeFile(path, data, length, position, openMode));
   }
-
-  async createDirectory(path: string): Promise<void> {
-    this.emitGlobal(path, "createdir", true);
-    return this.withLock(path, async () => await fsP.mkdir(path));
+  readLargeFile(path: string): Promise<File> {
+    return this.route(() => fsRouter.readLargeFile(path));
   }
-  async createFile(path: string): Promise<void> {
-    return this.withLock(path, async () => {
-      const fh = await fsP.open(path, O_CREAT | O_EXCL | O_RDWR);
-      await fh.writeFile(new Uint8Array(0));
-      await fh.close();
-      this.emitGlobal(px.dirname(path), "createFile", true);
-    });
+  stat(path: string): Promise<fs.Stats> {
+    return this.route(() => fsRouter.stat(path));
   }
-  async readDirectory(path: string): Promise<string[]> {
-    return this.withLock(path, async () => await fsP.readdir(path));
+  createDirectory(path: string): Promise<void> {
+    return this.mkdir(path);
   }
-
-  async ls(path: string): Promise<FSDirent[]> {
-    return this.withLock(path, async () => {
-      const od = await fsP.opendir(path);
-      const fsd = [] as FSDirent[];
-      for await (const op of od) {
-        fsd.push({
-          dt_type: op.type,
-          ino: op.ino,
-          name: op.name,
-        });
-      }
-      await od.close();
-      return fsd;
-    });
+  createFile(path: string): Promise<void> {
+    return this.route(() => fsRouter.createFile(path));
   }
-
-  async removeEntry(path: string): Promise<void> {
-    return this.withLock(path, async () => {
-      await fsP.rm(path);
-      this.emitGlobal(px.dirname(path), "removed", true);
-    });
+  readdir(path: string): Promise<string[]> {
+    return this.route(() => fsRouter.readdir(path));
   }
-
-  async removeDirectory(
-    path: string,
-    opts: { recursive: boolean } = { recursive: false },
-  ): Promise<void> {
-    return this.withLock(path, async () => {
-      await fsP.rm(path, {
-        recursive: opts.recursive,
-      });
-      this.emitGlobal(px.dirname(path), "removed", true);
-    });
+  readDirectory(path: string): Promise<string[]> {
+    return this.readdir(path);
   }
-  async mkdir(
-    path: string,
-    opts: { recursive: boolean } = { recursive: false },
-  ): Promise<void> {
-    return this.withLock(path, async () => {
-      this.emitGlobal(px.dirname(path), "mkdir", true);
-      await fsP.mkdir(path, opts);
-    });
+  ls(path: string): Promise<FSDirent[]> {
+    return this.route(() => fsRouter.ls(path));
   }
-  async truncateInternal(path: string, nwSize: number) {
-    await fsP.truncate(path, nwSize);
-
-    await saveIndex();
-    try {
-      let hFile = await webfs.get("file", path);
-
-      let wrtr = await hFile.createWritable({ keepExistingData: true });
-      await wrtr.truncate(nwSize);
-      await wrtr.close();
-    } catch {}
-    webfs.index.get(path)?.update({
-      size: nwSize,
-      atimeMs: Date.now() 
-    });
-    await this.emitGlobal(path, "trunc", true);
+  removeEntry(path: string): Promise<void> {
+    return this.route(() => fsRouter.remove(path));
   }
-  async truncate(path: string, nwSize: number): Promise<void> {
-    return this.withLock(path, async () => {
-      await this.truncateInternal(path, nwSize);
-    });
+  removeDirectory(path: string, opts = { recursive: false }): Promise<void> {
+    return this.route(() => fsRouter.remove(path, opts));
+  }
+  mkdir(path: string, opts = { recursive: false }): Promise<void> {
+    return this.route(() => fsRouter.mkdir(path, opts));
+  }
+  truncate(path: string, size: number): Promise<void> {
+    return this.route(() => fsRouter.truncate(path, size));
   }
 }
+
 function downloadV86(getSrvRoot: () => string) {
   return import(/* @vite-ignore */ getSrvRoot() + "libv86.mjs");
 }
@@ -581,7 +437,7 @@ async function startEmulator(
     virtio_console: true,
     autostart: true,
     filesystem: {
-      handle9p: getHandler(globChEmitter),
+      handle9p: getHandler(fsRouter),
     },
     initrd: {
       buffer: initrdBuffer,

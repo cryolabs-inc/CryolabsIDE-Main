@@ -1,30 +1,10 @@
-import { FileHandle } from '@zenfs/core/node/promises.js';
 import { MarshallArray, UnmarshallArray } from '../struct';
-import { type Dir } from '@zenfs/core';
-
-import * as p from 'path-browserify';
-import { O_APPEND, O_CREAT, O_EXCL, O_RDWR, O_TRUNC, O_WRONLY, S_IFDIR, S_IFMT, S_IFREG } from '@zenfs/core/constants.js';
+import p from 'path-browserify';
+import { S_IFDIR, S_IFMT } from '@zenfs/core/constants.js';
 import { Exception, withErrno } from 'kerium';
-import { DirType } from '@zenfs/core/vfs/dir.js';
-import { fsP, webfs } from '.';
-import type { FSChange } from './changes';
-import type { Emitter } from '../events';
-const P9_DEBUG = false;
-function p9log(...args: any[]) {
-    if (P9_DEBUG) console.log("[9p]", ...args);
-}
+import { FileInfo, fmtQid, type Qid } from './file_info';
+import type { FileSystemRouter } from './router';
 
-enum p9_qid_t {
-    P9_QTDIR = 0x80,
-    P9_QTAPPEND = 0x40,
-    P9_QTEXCL = 0x20,
-    P9_QTMOUNT = 0x10,
-    P9_QTAUTH = 0x08,
-    P9_QTTMP = 0x04,
-    P9_QTSYMLINK = 0x02,
-    P9_QTLINK = 0x01,
-    P9_QTFILE = 0x00,
-};
 const P9_SETATTR_MODE = 0x00000001;
 const P9_SETATTR_UID = 0x00000002;
 const P9_SETATTR_GID = 0x00000004;
@@ -34,8 +14,6 @@ const P9_SETATTR_MTIME = 0x00000020;
 const P9_SETATTR_CTIME = 0x00000040;
 const P9_SETATTR_ATIME_SET = 0x00000080;
 const P9_SETATTR_MTIME_SET = 0x00000100;
-const {
-    P9_QTDIR} = p9_qid_t;
 enum p9_msg_t {
     P9_TLERROR = 6,
     P9_RLERROR,
@@ -107,524 +85,10 @@ enum p9_msg_t {
     P9_RWSTAT,
 };
 
-interface Qid { type: number, version: number, path: bigint };
-interface QidWithPath extends Qid { pathId: string };
 
-function openFlagsToString(fs: typeof import('.').fsP, flags: number) {
-  const result = [];
-  const { constants } = fs;
-
-  // 1. Handle Access Modes (Special case because O_RDONLY is usually 0)
-  // We use O_ACCMODE (0x3) to isolate the lower 2 bits.
-  const accMode = flags & 0x3;
-  if (accMode === constants.O_RDONLY) result.push('O_RDONLY');
-  else if (accMode === constants.O_WRONLY) result.push('O_WRONLY');
-  else if (accMode === constants.O_RDWR) result.push('O_RDWR');
-
-  // 2. Check for individual status/creation flags
-  const otherFlags = [
-    { name: 'O_CREAT', value: constants.O_CREAT },
-    { name: 'O_EXCL', value: constants.O_EXCL },
-    { name: 'O_TRUNC', value: constants.O_TRUNC },
-    { name: 'O_APPEND', value: constants.O_APPEND },
-    { name: 'O_NONBLOCK', value: constants.O_NONBLOCK },
-    { name: 'O_SYNC', value: constants.O_SYNC },
-    { name: 'O_DIRECTORY', value: constants.O_DIRECTORY },
-    { name: 'O_NOFOLLOW', value: constants.O_NOFOLLOW },
-  ];
-
-  for (const { name, value } of otherFlags) {
-    if (value && (flags & value) === value) {
-      result.push(name);
-    }
-  }
-
-  return result.join('|');
-}
-
-class FileInfo implements Qid {
-    type: number = 0;
-    version: number = 0;
-    path: bigint = 0n;
-    pathId: string = "";
-    handle?: Dir | FileHandle;
-    fs: typeof import('@zenfs/core').fs.promises;
-    parentHandle: FileInfo | null = null;
-    buffer: Uint8Array = new Uint8Array();
-    childrenCache: Map<string, FileInfo> = new Map(); // Cache children by name
-    refCount: number = 0;
-    changeEmitter: Emitter<FSChange>;
-    async emitChange(path: string, method: string, isEntryChange: boolean) {
-        this.changeEmitter.emit({
-            path,
-            method,
-            isEntryChange
-        });
-    }
-    async moveTo(oldName: string, newDfid: FileInfo, newName: string) {
-        webfs.rename(p.join(this.pathId, oldName), p.join(newDfid.pathId, newName));
-        // Remove from old parent's cache
-        this.childrenCache.delete(oldName);
-        // Invalidate new parent's cache if the new name already existed
-        newDfid.childrenCache.delete(newName);
-    }
-    async link(name: string, toPath: string) {
-
-        await webfs.link(p.join(this.pathId, name), toPath);
-    }
-    async truncate(nwSize: number) {
-        webfs.index.get(this.pathId)?.update({size: nwSize});
-    }
-    async utime(newMtime: bigint, newAtime: bigint) {
-         webfs.index.get(this.pathId)?.update({atimeMs: Number(newAtime), mtimeMs: Number(newMtime)});
-    }
-    async chown(uid: number, gid: number) {
-        webfs.index.get(this.pathId)?.update({uid, gid});
-    }
-    async chmod(mode: number) {
-        const idx = webfs.index.get(this.pathId);
-        if (!idx) {
-            throw withErrno("ENOENT");
-        }
-
-        webfs.index.get(this.pathId)?.update({mode: (idx.mode & (mode > S_IFMT ? ~S_IFMT : S_IFMT)) | mode});
-    }
-    constructor(fs: typeof import('@zenfs/core').fs.promises, {
-        version, path, pathId, type
-    }: QidWithPath, parentHandle: FileInfo | null = null, emitter: Emitter<FSChange>) {
-        this.type = type;
-        this.version = version;
-        this.path = path;
-        this.fs = fs;
-        this.pathId = pathId;
-        this.parentHandle = parentHandle;
-        this.changeEmitter =emitter;
-    }
-    async readlink() {
-        return await this.fs.readlink(this.pathId);
-    }
-    async symlink(name: string, tgt: string, gid: number) {
-        const symlinkPath = p.join(this.pathId, name);
-        await this.fs.symlink(tgt, symlinkPath);
-        await this.fs.chown(symlinkPath, 0, gid);
-        this.emitChange(this.pathId, "symlink", true);
-        return this.walk(name);
-    }
-    async mknod() {
-        throw withErrno('ENOTSUP', "Mknod() is not supported.")
-    }
-    async mkdir(name: string, mode: number, gid: number) {
-        await webfs.mkdir(p.join(this.pathId, name), {"mode": mode, uid:0, gid});
-        this.emitChange(this.pathId, "mkdir", true);
-    }
-    async open(mode: number) {
-        const { fs } = this;
-        if (this.type & P9_QTDIR) {
-            this.handle = await fs.opendir(this.pathId);
-            const ad = await Array.fromAsync(this.handle);
-
-            const infos = ad.map(v => {
-                return {
-                    type: v.type,
-                    name: v.name
-                };
-            });
-            infos.push({ name: "..", type: DirType.DIR });
-            infos.push({ name: ".", type: DirType.DIR });
-
-            const totalSize = infos.reduce((prevVal, curVal) => {
-                return curVal.name.length + 2 + 1 + 8 + 13 + prevVal;
-            }, 0);
-            const u8 = new Uint8Array(totalSize);
-            let off = 0;
-
-            for (const { name, type } of infos) {
-                const entSize = name.length + 2 + 1 + 8 + 13;
-                u8.set(MarshallArray([
-                    ["u8array", fmtQid(await this.walk(name))],
-                    ["u64", BigInt(off + entSize)],
-                    ['u8', type],
-                    ['u16', name.length],
-                    ["s", name]
-                ]), off);
-                off += entSize;
-            }
-            this.buffer = u8;
-        } else {
-            this.handle = await fs.open(this.pathId, mode&~O_EXCL);
-
-        }
-
-    }
-    async stat() {
-
-        const idx =  webfs.index.get(this.pathId);
-        if (!idx){
-            throw new Error("Idx failed.");
-        }
-        return idx;
-    }
-    clearCaches() {
-        for (const child of this.childrenCache.values()) {
-            child.clearCaches();
-        }
-        this.childrenCache.clear();
-    }
-    async unlink(name: string) {
-        const statsInfo = await webfs.stat(p.join(this.pathId, name));
-        if ((statsInfo.mode & S_IFMT) === S_IFDIR) {
-            await webfs.rmdir(p.join(this.pathId, name));
-        } else {
-            await webfs.unlink(p.join(this.pathId, name));
-        }
-        // Clear removed child's caches before dropping reference
-        const cachedChild = this.childrenCache.get(name);
-        if (cachedChild) {
-            cachedChild.clearCaches();
-        }
-        this.childrenCache.delete(name);
-        this.emitChange(this.pathId, "rmdir", true);
-    }
-    ref() {
-        this.refCount++;
-    }
-    async clunk() {
-        this.refCount--;
-        if (this.refCount <= 0) {
-            await this.handle?.close();
-        }
-    }
-    async walk(name: string): Promise<FileInfo> {
-        const { fs } = this;
-
-        // Check children cache first - return existing child if available
-        if (this.childrenCache.has(name)) {
-            return this.childrenCache.get(name)!;
-        }
-
-        const npId = p.join(this.pathId, name);
-        const stats = await webfs.stat(npId); // exception will be thrown if it does nto exist!
-        const qid: QidWithPath = {
-            type: 0,
-            version: 0,
-            pathId: npId,
-            path: BigInt(stats.ino)
-        };
-
-
-        if ((stats.mode & S_IFMT) === S_IFDIR) {
-            qid.type = P9_QTDIR;
-        }
-        qid.version = 0;
-
-        let newFileInfo: FileInfo;
-        if ((stats.mode & S_IFMT) === S_IFREG) {
-            newFileInfo = new RawAccesHandle(this.fs, qid, this, this.changeEmitter);
-        } else {
-            newFileInfo = new FileInfo(this.fs, qid, this, this.changeEmitter);
-        }
-
-        // Store child in cache
-        this.childrenCache.set(name, newFileInfo);
-
-        return newFileInfo;
-    }
-
-
-    async write(data: Uint8Array, position: number) {
-        if (!this.handle) {
-            throw withErrno("EBADF", "Tried to write without preparing for I/O with open()");
-        }
-        if (!(this.handle instanceof FileHandle)) {
-            throw withErrno("EISDIR", "Tried to write data to a directory");
-        }
-        const beforeDat: Uint8Array|null = null;
-        
-        const a =  await this.handle.write(data, { position, length: data.length});
-        this.emitChange(this.pathId, "write" ,false);
-        return a;
-    }
-    async sync() {
-        // no sync needed.
-    }
-    async read(position: number, length: number, buffer: Uint8Array): Promise<number> {
-        if (this.handle instanceof FileHandle) {
-            const ret = (await this.handle.read(buffer, 0, length, position)).bytesRead;
-            return ret;
-        }
-        else {
-            const readFrom = this.buffer.subarray(position, Math.min(this.buffer.length, position + length));
-            buffer.set(readFrom);
-            return readFrom.length;
-        }
-    }
-    async create(name: string, mode: number, gid: number) {
-        const { fs } = this;
-        const filePath = p.join(this.pathId, name);
-        await webfs.createFile(filePath, {mode, uid:0, gid, size: 0});
-        await webfs.write(filePath, new Uint8Array(0), 0);
-        this.emitChange(this.pathId, "create", true);
-        const ca =  await this.walk(name);
-        await ca.open(mode);
-        return ca;
-    }
-    getHandle() {
-        return this.handle;
-    }
-    asQid(): Qid {
-        const { path, version, type } = this;
-        return { path, version, type };
-    }
-}
-class RawAccesHandle extends FileInfo {
-    opfsHandle?: FileSystemSyncAccessHandle;
-    private openMode: number = 0;
-
-    private readonly BLOCK_SIZE = 65536;
-    private readonly MAX_CACHED_BLOCKS = 4096;
-    private readonly READAHEAD_BLOCKS = 16;
-
-    private blockCache: Map<number, { buffer: Uint8Array, length: number }> = new Map();
-    
-    private static bufferPool: Uint8Array[] = [];
-    private static readonly MAX_POOL_SIZE = 64;
-    
-    private acquireBuffer(): Uint8Array {
-        return RawAccesHandle.bufferPool.pop() ?? new Uint8Array(this.BLOCK_SIZE);
-    }
-    
-    private releaseBuffer(buf: Uint8Array): void {
-        if (buf.length === this.BLOCK_SIZE && RawAccesHandle.bufferPool.length < RawAccesHandle.MAX_POOL_SIZE) {
-            RawAccesHandle.bufferPool.push(buf);
-        }
-    }
-    async updateMeta() {
-        const ino = webfs.index.get(this.pathId);
-        ino?.update({size: this.opfsHandle?.getSize(), mtimeMs: Math.floor(performance.now()), atimeMs: Math.floor(performance.now())});
-    }
-
-    async truncate(newSize: number): Promise<void> {
-        if (!this.opfsHandle) {
-            // If file is not open, use the base class implementation
-            await super.truncate(newSize);
-            return;
-        }
-
-        const oldSize = this.opfsHandle.getSize();
-        this.opfsHandle.truncate(newSize);
-        this.opfsHandle.flush();
-
-        // If file was shrunk, invalidate all affected blocks
-        if (newSize < oldSize) {
-            const firstAffectedBlock = Math.floor(newSize / this.BLOCK_SIZE);
-            // Remove all blocks from firstAffectedBlock onwards
-            for (const [blockNum, entry] of this.blockCache.entries()) {
-                if (blockNum >= firstAffectedBlock) {
-                    this.releaseBuffer(entry.buffer);
-                    this.blockCache.delete(blockNum);
-                }
-            }
-        } else if (newSize > oldSize) {
-            // If file was extended, invalidate the last block of the old size
-            // as it may now contain zeros
-            const lastOldBlock = Math.floor(oldSize / this.BLOCK_SIZE);
-            const entry = this.blockCache.get(lastOldBlock);
-            if (entry) {
-                this.releaseBuffer(entry.buffer);
-                this.blockCache.delete(lastOldBlock);
-            }
-        }
-
-        await this.updateMeta();
-    }
-
-    async open(mode: number): Promise<void> {
-        if (this.type !== 0) {
-            throw new Error("cant use raw access with directories");
-        }
-        if (mode & O_CREAT) {
-            try {
-            await webfs.createFile(this.pathId, {mode: 0o777, uid: 0, gid: 0});
-            await webfs.write(this.pathId, new Uint8Array(0), 0);
-            } catch(e) {
-                
-            }
-        }
-        this.openMode = mode;
-        this.opfsHandle ??= await (await webfs.get("file", this.pathId)).createSyncAccessHandle();
-
-        const idx = webfs.index.get(this.pathId);
-        idx && this.opfsHandle.truncate(idx.size);
-
-        if (mode & O_TRUNC) {
-            this.opfsHandle.truncate(0);
-            this.opfsHandle.flush();
-            this.invalidateCache();
-            await this.updateMeta();
-        }
-    }
-
-    async write(data: Uint8Array, position: number): Promise<{ bytesWritten: number; buffer: Uint8Array<ArrayBufferLike>; }> {
-        if (!this.opfsHandle) {
-            throw new Error("Writing without preparing for I/O.");
-        }
-
-        // Validate write permission
-        const accessMode = this.openMode & 0x3;
-        if (accessMode === 0) { // O_RDONLY
-            throw withErrno("EBADF", "File not opened for writing");
-        }
-
-        // Handle O_APPEND: always write to end of file
-        let writePosition = position;
-        if (this.openMode & O_APPEND) {
-            writePosition = this.opfsHandle.getSize();
-        }
-
-        const startBlock = Math.floor(writePosition / this.BLOCK_SIZE);
-        const endBlock = Math.floor((writePosition + data.length - 1) / this.BLOCK_SIZE);
-        for (let b = startBlock; b <= endBlock; b++) {
-            const entry = this.blockCache.get(b);
-            if (entry) {
-                this.releaseBuffer(entry.buffer);
-                this.blockCache.delete(b);
-            }
-        }
-
-        const bytesWritten = this.opfsHandle.write(data, { at: writePosition });
-        await this.updateMeta();
-        this.emitChange(this.pathId, "write", false);
-        return { bytesWritten, buffer: data };
-    }
-
-    async read(position: number, length: number, buffer: Uint8Array): Promise<number> {
-        if (!this.opfsHandle) {
-            throw new Error("Reading without preparing for I/O.");
-        }
-
-        // Validate read permission
-        const accessMode = this.openMode & 0x3;
-        if (accessMode === O_WRONLY) {
-            throw withErrno("EBADF", "File not opened for reading");
-        }
-
-        const startBlock = Math.floor(position / this.BLOCK_SIZE);
-        const endBlock = Math.floor((position + length - 1) / this.BLOCK_SIZE);
-
-        let bufferOffset = 0;
-
-        for (let blockNum = startBlock; blockNum <= endBlock; blockNum++) {
-            const block = this.getBlock(blockNum);
-            const blockStart = blockNum * this.BLOCK_SIZE;
-            const readStart = Math.max(position, blockStart);
-            const readEnd = Math.min(position + length, blockStart + block.length);
-            
-            const offsetInBlock = readStart - blockStart;
-            const copyLength = readEnd - readStart;
-            
-            if (copyLength <= 0) break;
-
-            buffer.set(block.buffer.subarray(offsetInBlock, offsetInBlock + copyLength), bufferOffset);
-            bufferOffset += copyLength;
-        }
-
-    this.readAhead(endBlock + 1);
-
-
-        return bufferOffset;
-    }
-
-    private getBlock(blockNum: number): { buffer: Uint8Array, length: number } {
-        const cached = this.blockCache.get(blockNum);
-        if (cached) {
-            this.blockCache.delete(blockNum);
-            this.blockCache.set(blockNum, cached);
-            return cached;
-        }
-        return this.fetchBlock(blockNum);
-    }
-
-    private fetchBlock(blockNum: number): { buffer: Uint8Array, length: number } {
-        const blockStart = blockNum * this.BLOCK_SIZE;
-        const buffer = this.acquireBuffer();
-        const bytesRead = this.opfsHandle!.read(buffer, { at: blockStart });
-
-        const entry = { buffer, length: bytesRead };
-        if (this.blockCache.size >= this.MAX_CACHED_BLOCKS) {
-            const firstKey = this.blockCache.keys().next().value!;
-            const evicted = this.blockCache.get(firstKey)!;
-            this.releaseBuffer(evicted.buffer);
-            this.blockCache.delete(firstKey);
-        }
-
-        this.blockCache.set(blockNum, entry);
-        return entry;
-    }
-
-    private readAhead(startBlockNum: number): void {
-        if (this.blockCache.size >= this.MAX_CACHED_BLOCKS - this.READAHEAD_BLOCKS) {
-            return;
-        }
-
-        const fileSize = this.opfsHandle!.getSize();
-
-        for (let i = 0; i < this.READAHEAD_BLOCKS; i++) {
-            const blockNum = startBlockNum + i;
-            
-            if (this.blockCache.has(blockNum)) continue;
-            
-            const blockStart = blockNum * this.BLOCK_SIZE;
-            if (blockStart >= fileSize) break;
-
-            this.fetchBlock(blockNum);
-        }
-    }
-
-    override clearCaches(): void {
-        super.clearCaches();
-        this.invalidateCache();
-    }
-
-    private invalidateCache(): void {
-        for (const entry of this.blockCache.values()) {
-            this.releaseBuffer(entry.buffer);
-        }
-        this.blockCache.clear();
-    }
-
-    async sync(): Promise<void> {
-        if (this.opfsHandle) {
-            this.opfsHandle.flush();
-        }
-    }
-
-    async clunk(): Promise<void> {
-        this.refCount--;
-        if (this.refCount <= 0) {
-            await this.handle?.close();
-            this.opfsHandle?.flush();
-            this.opfsHandle?.close();
-            this.opfsHandle = undefined;
-            this.invalidateCache();
-        }
-    }
-}
-function fmtQid(qid: Qid) {
-    return MarshallArray([
-        ['u8', qid.type],
-        ['u32', qid.version],
-        ["u64", qid.path]
-    ]);
-}
-async function getRootFileInfo(fs: typeof import('@zenfs/core').fs.promises, emitter: Emitter<FSChange>) {
-    const fa = await fs.stat('/');
-    const fidInfo = new FileInfo(fs, { type: P9_QTDIR, pathId: "/", path: BigInt(fa.ino), version: 0 }, null, emitter);
-    return fidInfo;
-
-}
-
-function getHandler(chEmitter: Emitter<FSChange>) {
+function getHandler(router: FileSystemRouter) {
     const fids: Record<number, FileInfo> = {};
+    const openModes: Record<number, number> = {};
     const tagsFlushed: Set<number> = new Set();
     let msize = 0;
     let rootFileInfo: FileInfo | null = null;
@@ -666,6 +130,7 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                         throw withErrno("EINVAL");
                     }
                     await fidInfo.open(flags);
+                    openModes[fid] = flags;
                     const qid = fidInfo.asQid();
                     methodSpecific = MarshallArray([
                         ["u8array", fmtQid(qid)],
@@ -678,10 +143,11 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     const [, [fid, name, flags, mode, gid]] = UnmarshallArray(msgbytes, [["u32"], ["sl"], ["u32"], ["u32"], ["u32"]]);
                     const pFid = fids[fid];
                     const newQid = await pFid.create(name, mode, gid);
-                    pFid.refCount--;
+                    await pFid.clunk();
                     fids[fid] = newQid;
                     newQid.ref();
                     await newQid.open(flags);
+                    openModes[fid] = flags;
                     methodSpecific = MarshallArray([
                         ["u8array", fmtQid(newQid)],
                         ["u32", 1024 * 1024]
@@ -879,7 +345,7 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     // fid[4] afid[4] uname[s] aname[s] n_uname[4]
                     const [, [fid]] = UnmarshallArray(msgbytes, [["u32"], ["u32"], ["sl"], ["sl"], ["u32"]]);
                     if (!rootFileInfo) {
-                        rootFileInfo = await getRootFileInfo(fs, chEmitter);
+                        rootFileInfo = await router.root();
                     }
                     fids[fid] = rootFileInfo;
                     rootFileInfo.ref();
@@ -972,7 +438,8 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     const view = new DataView(response.buffer);
 
                     // Read directly into response buffer at offset 11
-                    const numRead = await f.read(Number(offset), count, response.subarray(11));
+                    const numRead = await f.withMode(openModes[fid] ?? 0,
+                        () => f.read(Number(offset), count, response.subarray(11)));
 
                     // Write header
                     const payloadSize = 4 + numRead;  // numRead field + data
@@ -994,7 +461,8 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     // Read data directly from msgbytes without extra allocation
                     const dataView = msgbytes.subarray(16, 16 + count);
                     const f = fids[fid];
-                    const r = await f.write(dataView, Number(offset));
+                    const r = await f.withMode(openModes[fid] ?? 0,
+                        () => f.write(dataView, Number(offset)));
 
                     // Write response directly: size(4) + method(1) + tag(2) + bytesWritten(4)
                     const response = new Uint8Array(11);
@@ -1016,6 +484,7 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                     if (f) {
                         await f.clunk();
                         delete fids[fid];
+                        delete openModes[fid];
                     }
                     methodSpecific = new Uint8Array();
                     break;
@@ -1036,6 +505,7 @@ function getHandler(chEmitter: Emitter<FSChange>) {
                         }
                         await f.clunk();
                         delete fids[fid];
+                        delete openModes[fid];
                     }
                     methodSpecific = new Uint8Array();
                     break;
@@ -1096,7 +566,8 @@ function getHandler(chEmitter: Emitter<FSChange>) {
 
         }
     }
-    return p9handler.bind(null, fsP);
+    return (request: Uint8Array, respond: (response: Uint8Array) => void) =>
+        router.run(() => p9handler(router.fs, request, respond));
 }
 
 export { getHandler };

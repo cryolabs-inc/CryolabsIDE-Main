@@ -1,3 +1,5 @@
+import { CodemirrorInstanceCache } from "./CodemirrorInstanceCache";
+export { CodemirrorInstanceCache } from "./CodemirrorInstanceCache";
 import type { DialogManager, FilePickerOptions } from "$lib/base/dialog/DialogManager";
 import { Prefs } from "$lib/base/prefs";
 import {languages} from '@codemirror/language-data'
@@ -305,49 +307,6 @@ class LanguageClients {
             resolve(lsp_client);
         }));
         return {client: this.lang_id_to_client.get(lang_id)!, lang_extension};
-    }
-}
-
-const CODEMIRROR_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-interface CodemirrorCacheEntry {
-    view: codemirror.EditorView;
-    callbackRef: { fn: (data: Uint8Array) => void };
-    ttlTimer: ReturnType<typeof setTimeout> | null;
-}
-
-export class CodemirrorInstanceCache {
-    private entries = new Map<string, CodemirrorCacheEntry>();
-
-    acquire(filePath: string): CodemirrorCacheEntry | null {
-        const entry = this.entries.get(filePath);
-        if (!entry) return null;
-        if (entry.ttlTimer !== null) {
-            clearTimeout(entry.ttlTimer);
-            entry.ttlTimer = null;
-        }
-        return entry;
-    }
-
-    store(filePath: string, view: codemirror.EditorView, callbackRef: { fn: (data: Uint8Array) => void }) {
-        this.entries.set(filePath, { view, callbackRef, ttlTimer: null });
-    }
-
-    release(filePath: string) {
-        const entry = this.entries.get(filePath);
-        if (!entry) return;
-        entry.ttlTimer = setTimeout(() => {
-            entry.view.destroy();
-            this.entries.delete(filePath);
-        }, CODEMIRROR_TTL_MS);
-    }
-
-    destroyAll() {
-        for (const [, entry] of this.entries) {
-            if (entry.ttlTimer !== null) clearTimeout(entry.ttlTimer);
-            entry.view.destroy();
-        }
-        this.entries.clear();
     }
 }
 
