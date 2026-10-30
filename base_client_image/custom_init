@@ -7,6 +7,7 @@ depend() {
 start() {
     . /etc/profile.d/java.sh
     ip link set eth0 up
+    ip address replace 127.0.0.1/8 dev lo
     ip link set lo up
     mkdir /dev/pts
     mount -t devpts /dev/pts /dev/pts

@@ -2,7 +2,7 @@ import { Duplex } from "stream";
 import { ConnectionClient } from "../t.js";
 import * as net from 'net';
 let conn =net.createConnection({
-    host: "localhost",
+    host: "127.0.0.1",
     port: 8040
 }, async()=>{
 let {readable, writable} = Duplex.toWeb(conn);

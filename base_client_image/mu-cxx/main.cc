@@ -1084,7 +1084,7 @@ int main(int argc, char **argv) {
   reg_listener(sfd, signalfd_handler, nullptr, EPOLLIN);
   signal(SIGPIPE, SIG_IGN);
 
-  printf("Server started on localhost:8088\n");
+  printf("Server started on 127.0.0.1:8088\n");
   #ifdef IS_HVC 
   int readyfd = open("/dev/hvc1",O_RDWR);
   const char* ready = "READY\n";

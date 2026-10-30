@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jdk-headless \
     python3 strace libmimalloc3 libjemalloc2 vmtouch curl iproute2 udhcpc gnupg gpgv wget psmisc procps strace inotify-tools && rm -rf /var/lib/apt/lists/*
 COPY --from=java-language-server-build /server/dist/classpath/ /opt/java-language-server/
+COPY base_client_image/hosts /etc/cryolabs/hosts
 COPY base_client_image/java-language-server /usr/local/bin/java-language-server
 RUN printf 'export JAVA_TOOL_OPTIONS="%s"\n' "$JAVA_TOOL_OPTIONS" > /etc/profile.d/java.sh \
     && chmod +x /usr/local/bin/java-language-server \
