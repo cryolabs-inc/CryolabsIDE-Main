@@ -2,7 +2,9 @@ FROM --platform=$BUILDPLATFORM maven:3.9.9-eclipse-temurin-21 AS java-language-s
 WORKDIR /server
 COPY java-lang-server/pom.xml ./
 COPY java-lang-server/src/ ./src/
-RUN mvn -B package -DskipTests
+COPY base_client_image/patches/java-language-server-jdk-index.patch /tmp/java-language-server-jdk-index.patch
+RUN git apply --no-index /tmp/java-language-server-jdk-index.patch \
+    && mvn -B package -DskipTests
 COPY base_client_image/iterator/IterativeBuilder.java /iterator/IterativeBuilder.java
 RUN mkdir -p /iterator/classes \
     && javac --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
@@ -22,13 +24,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     clangd \
     openjdk-21-jdk-headless \
+    python3-pylsp \
+    python3-pyflakes \
     python3 strace libmimalloc3 libjemalloc2 vmtouch curl iproute2 udhcpc gnupg gpgv wget psmisc procps strace inotify-tools && rm -rf /var/lib/apt/lists/*
 COPY --from=java-language-server-build /server/dist/classpath/ /opt/java-language-server/
 COPY base_client_image/hosts /etc/cryolabs/hosts
 COPY base_client_image/java-language-server /usr/local/bin/java-language-server
 RUN printf 'export JAVA_TOOL_OPTIONS="%s"\n' "$JAVA_TOOL_OPTIONS" > /etc/profile.d/java.sh \
     && chmod +x /usr/local/bin/java-language-server \
-    && java -version && javac -version
+    && java -version && javac -version \
+    && java -cp '/opt/java-language-server/*' org.javacs.ScanClassPath \
+        /tmp/java-lsp-index/org/javacs/jdk-top-level-classes.txt \
+    && jar uf /opt/java-language-server/java-language-server.jar \
+        -C /tmp/java-lsp-index org/javacs/jdk-top-level-classes.txt \
+    && rm -rf /tmp/java-lsp-index
 COPY --from=java-language-server-build /iterator/classes/ /opt/iterator/
 COPY --from=java-language-server-build /server/dist/classpath/gson-2.8.9.jar /opt/iterator/gson.jar
 COPY base_client_image/iterator/ /opt/iterator-source/

@@ -4,11 +4,16 @@
     import * as comlink from 'comlink';
     import { onMount } from "svelte";
     import yaml from 'yaml';
-    let loc = location.search;
+    import { normalizeRootURI } from '$lib/base/resource/rootURI';
+    const pageURL = new URL(location.href);
     let rootURL = "file:///user";
-    let u = new URLSearchParams(loc).get('url');
+    let u = pageURL.searchParams.get('url');
     if (u) {
-        rootURL = u;
+        rootURL = normalizeRootURI(u);
+        if (rootURL !== u) {
+            pageURL.searchParams.set('url', rootURL);
+            history.replaceState(history.state, '', pageURL.href);
+        }
     }
 </script>
 {#await fetch("/manual_config.yaml").then(v=>v.text()).then(v=>yaml.parse(v))}

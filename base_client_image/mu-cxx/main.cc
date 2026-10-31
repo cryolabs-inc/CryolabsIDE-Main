@@ -37,6 +37,9 @@ typedef struct {
   int is_readable;
   int is_pty;
   int self_real_pid;
+  std::vector<uint8_t> pending_write;
+  size_t write_offset = 0;
+  bool close_after_write = false;
 } FDState;
 
 typedef int (*PFNSENDDATA)(void *conn_state, uint32_t request_id,
@@ -50,77 +53,53 @@ typedef struct __attribute__((packed)) {
 typedef struct {
   std::unique_ptr<std::map<int32_t, FDState *>> fid_to_fd;
   std::unique_ptr<std::map<int32_t, int32_t>> pfid_to_pid;
-  std::vector<uint8_t> data_bytes;
+  std::vector<uint8_t> data_bytes; // Outgoing message payload only.
+  std::vector<uint8_t> incoming_bytes;
+  std::vector<uint8_t> pending_write;
+  size_t write_offset = 0;
   int32_t self_fd;
   PFNSENDDATA send_data_bytes;
   struct sockaddr_in sa_in;
 } ConnectionState;
 
-int tcp_send_connection_state(void *conn_state, uint32_t request_id,
-                              uint8_t request_method) {
-  if (request_method == 7) {
-  }
-  ConnectionState *cs = (ConnectionState *)conn_state;
-  uint8_t *inner_data = cs->data_bytes.data();
-  size_t write_len = cs->data_bytes.size();
-  size_t to_write_len = write_len + sizeof(Message);
+int update_listener(int fd, uint32_t events);
 
-  uint8_t *to_write = (uint8_t *)malloc(to_write_len);
-  Message *msg = (Message *)to_write;
-  msg->message_len = be32toh(to_write_len);
-  msg->message_id = be32toh(request_id);
-  msg->method = request_method;
-  if (write_len > 0)
-    memcpy(msg->method_payload, inner_data, write_len);
-  // if (request_method == 5) {
-
-  // }
-  size_t written = 0;
-  while (written < to_write_len) {
-    // FIX: send from correct offset and send only remaining bytes
-    int ret = send(cs->self_fd, to_write + written, to_write_len - written, 0);
-    if (ret == -1) {
-      return errno;
-    } else {
-      written += ret;
-    }
+// Keep unwritten bytes until epoll reports writable again. A short write or
+// EAGAIN must never truncate a mux packet (or the peer waits forever).
+int flush_write(int fd, std::vector<uint8_t> &pending, size_t &offset) {
+  while (offset < pending.size()) {
+    ssize_t written = write(fd, pending.data() + offset, pending.size() - offset);
+    if (written < 0 && errno == EINTR) continue;
+    if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return 0;
+    if (written <= 0) return -1;
+    offset += written;
   }
-  free(to_write);
-  cs->data_bytes.clear();
+  pending.clear();
+  offset = 0;
   return 0;
 }
-int hvc_send_state(void *conn_state, uint32_t request_id,
-                              uint8_t request_method) {
-  if (request_method == 7) {
-  }
-  ConnectionState *cs = (ConnectionState *)conn_state;
-  uint8_t *inner_data = cs->data_bytes.data();
-  size_t write_len = cs->data_bytes.size();
-  size_t to_write_len = write_len + sizeof(Message);
 
-  uint8_t *to_write = (uint8_t *)malloc(to_write_len);
-  Message *msg = (Message *)to_write;
-  msg->message_len = be32toh(to_write_len);
-  msg->message_id = be32toh(request_id);
+int flush_connection(ConnectionState *cs) {
+  int result = flush_write(cs->self_fd, cs->pending_write, cs->write_offset);
+  if (result < 0) return result;
+  return update_listener(cs->self_fd, EPOLLIN |
+      (cs->pending_write.empty() ? 0 : EPOLLOUT));
+}
+
+int send_connection_state(void *conn_state, uint32_t request_id,
+                          uint8_t request_method) {
+  auto *cs = static_cast<ConnectionState *>(conn_state);
+  size_t offset = cs->pending_write.size();
+  size_t length = sizeof(Message) + cs->data_bytes.size();
+  cs->pending_write.resize(offset + length);
+  auto *msg = reinterpret_cast<Message *>(cs->pending_write.data() + offset);
+  msg->message_len = htobe32(length);
+  msg->message_id = htobe32(request_id);
   msg->method = request_method;
-  if (write_len > 0)
-    memcpy(msg->method_payload, inner_data, write_len);
-  // if (request_method == 5) {
-
-  // }
-  size_t written = 0;
-  while (written < to_write_len) {
-    // FIX: send from correct offset and send only remaining bytes
-    int ret = write(cs->self_fd, to_write + written, to_write_len - written);
-    if (ret == -1) {
-      return errno;
-    } else {
-      written += ret;
-    }
-  }
-  free(to_write);
+  if (!cs->data_bytes.empty())
+    memcpy(msg->method_payload, cs->data_bytes.data(), cs->data_bytes.size());
   cs->data_bytes.clear();
-  return 0;
+  return flush_connection(cs);
 }
 static std::map<pid_t, std::set<FDState *>> pids_to_fdstates =
     std::map<pid_t, std::set<FDState *>>();
@@ -163,6 +142,15 @@ int unreg_listener(int fd) {
     epd_registry.erase(it);
   }
   return res;
+}
+
+int update_listener(int fd, uint32_t events) {
+  auto it = epd_registry.find(fd);
+  if (it == epd_registry.end()) return -1;
+  struct epoll_event evt = {};
+  evt.events = events;
+  evt.data.ptr = it->second;
+  return epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &evt);
 }
 
 int reg_listener(int fd, PFNEPOLLCALLBACK listener, void *user_data,
@@ -351,10 +339,19 @@ int destroy_fd_state(FDState *pstate) {
   unreg_listener(pstate->self_fd);
 
   close(pstate->self_fd);
+  auto process = pids_to_fdstates.find(pstate->self_real_pid);
+  if (process != pids_to_fdstates.end()) process->second.erase(pstate);
   c->fid_to_fd->erase(it);
   delete pstate;
 
   return 0;
+}
+
+int flush_child(FDState *proc) {
+  int result = flush_write(proc->self_fd, proc->pending_write, proc->write_offset);
+  if (result < 0) return result;
+  return update_listener(proc->self_fd, (proc->is_readable ? EPOLLIN : 0) |
+      (proc->pending_write.empty() ? 0 : EPOLLOUT));
 }
 
 int fid_fd_epoll_handler(int epoll_fd, int epoll_evts, void *user_data) {
@@ -362,7 +359,13 @@ int fid_fd_epoll_handler(int epoll_fd, int epoll_evts, void *user_data) {
   ConnectionState *conn_state = (ConnectionState *)proc->conn_state;
   std::vector<uint8_t> full_buffer;
   char buf[255];
+  if (epoll_evts & EPOLLOUT) {
+    if (flush_child(proc) < 0) epoll_evts |= EPOLLERR;
+    else if (proc->close_after_write && proc->pending_write.empty())
+      return destroy_fd_state(proc);
+  }
   if (!proc->is_readable) {
+    if (!(epoll_evts & (EPOLLERR | EPOLLHUP))) return 0;
     uint32_t pipe_to_send = htobe32(proc->self_fid);
     conn_state->data_bytes.clear();
     conn_state->data_bytes.assign((uint8_t *)&pipe_to_send,
@@ -375,6 +378,7 @@ int fid_fd_epoll_handler(int epoll_fd, int epoll_evts, void *user_data) {
   bool pipe_closed = false;
   while (true) {
     int ret = read(epoll_fd, buf, sizeof(buf));
+    if (ret < 0 && errno == EINTR) continue;
     if (ret < 0 && errno == EWOULDBLOCK) {
       break;
     }
@@ -453,10 +457,14 @@ int handle_frame(ConnectionState *conn_state, int message_id, uint8_t *msg,
     return MSG_ERROR;
   }
 
-  int sfd = (*conn_state->fid_to_fd)[fid]->self_fd;
-  write(sfd, dat, buf->read_remaining);
+  FDState *proc = (*conn_state->fid_to_fd)[fid];
+  if (proc->close_after_write) {
+    free_buffer_context(buf);
+    return MSG_ERROR;
+  }
+  proc->pending_write.insert(proc->pending_write.end(), dat, dat + buf->read_remaining);
   free_buffer_context(buf);
-  return 0;
+  return flush_child(proc) < 0 ? MSG_ERROR : 0;
 }
 
 int handle_start_process(ConnectionState *conn_state, int message_id,
@@ -693,6 +701,7 @@ int close_pipe(ConnectionState* conn_state, int message_id, uint8_t* msg, size_t
   CHECK_OP(new_buffer_context(&buf, msg, message_len));
   uint32_t fid = 0;
   CHECK_OP(read_u32_be(buf, &fid));
+  free_buffer_context(buf);
   if (!is_fid_in_use(conn_state, fid)) {
     printf("CLosing non-existnt FD\n");
     return MSG_ERROR;
@@ -702,6 +711,10 @@ int close_pipe(ConnectionState* conn_state, int message_id, uint8_t* msg, size_t
     return MSG_ERROR;
   }
   FDState* fds = it->second;
+  if (!fds->pending_write.empty()) {
+    fds->close_after_write = true;
+    return 0;
+  }
   auto a = pids_to_fdstates.find(fds->self_real_pid);
   if (a == pids_to_fdstates.end()) {
     return MSG_ERROR;
@@ -744,13 +757,14 @@ int handle_kill_process(ConnectionState *conn_state, int message_id,
 int read_full_message(ConnectionState *conn_state, uint8_t **response_bytes,
                       size_t *response_len) {
 
-  if (conn_state->data_bytes.size() < sizeof(Message)) {
+  if (conn_state->incoming_bytes.size() < sizeof(Message)) {
     return NEEDS_MORE_DATA;
   }
 
-  Message *msg = reinterpret_cast<Message *>(conn_state->data_bytes.data());
+  Message *msg = reinterpret_cast<Message *>(conn_state->incoming_bytes.data());
   size_t msg_len = be32toh(msg->message_len);
-  if (msg_len > conn_state->data_bytes.size()) {
+  if (msg_len < sizeof(Message)) return MSG_ERROR;
+  if (msg_len > conn_state->incoming_bytes.size()) {
     return NEEDS_MORE_DATA;
   }
 
@@ -783,18 +797,17 @@ int read_full_message(ConnectionState *conn_state, uint8_t **response_bytes,
     break;
   }
 
-  // Consume the message from the buffer before calling the handler,
-  // since the handler may modify data_bytes for its response
+  // Consume the inbound message before dispatching it.
   size_t payload_offset = offsetof(Message, method_payload);
   size_t payload_len = msg_len - payload_offset;
 
-  // Copy the payload out since we're about to modify data_bytes
-  std::vector<uint8_t> payload_copy(conn_state->data_bytes.begin() +
+  // Keep the payload alive while consuming the inbound buffer.
+  std::vector<uint8_t> payload_copy(conn_state->incoming_bytes.begin() +
                                         payload_offset,
-                                    conn_state->data_bytes.begin() + msg_len);
+                                    conn_state->incoming_bytes.begin() + msg_len);
 
-  conn_state->data_bytes = std::vector<uint8_t>(
-      conn_state->data_bytes.begin() + msg_len, conn_state->data_bytes.end());
+  conn_state->incoming_bytes = std::vector<uint8_t>(
+      conn_state->incoming_bytes.begin() + msg_len, conn_state->incoming_bytes.end());
 
   if (handler != NULL) {
     int ret = handler(conn_state, msg_id, payload_copy.data(), payload_len);
@@ -809,6 +822,7 @@ int read_full_message(ConnectionState *conn_state, uint8_t **response_bytes,
 
 int fd_tcp_handler(int epoll_fd, int epoll_evts, void *user_data) {
   ConnectionState *conn_state = (ConnectionState *)user_data;
+  if ((epoll_evts & EPOLLOUT) && flush_connection(conn_state) < 0) return -1;
   uint8_t buf[255];
   bool is_connection_closed = false;
 
@@ -825,7 +839,7 @@ int fd_tcp_handler(int epoll_fd, int epoll_evts, void *user_data) {
         }
       }
       if (v > 0) {
-        conn_state->data_bytes.insert(conn_state->data_bytes.end(), buf,
+        conn_state->incoming_bytes.insert(conn_state->incoming_bytes.end(), buf,
                                       buf + v);
       }
       if (v == 0) {
@@ -894,7 +908,7 @@ int fd_tcp_listener_handler(int epoll_fd, int epoll_evts, void *user_data) {
     ConnectionState *cs = new ConnectionState();
     cs->data_bytes = std::vector<uint8_t>();
     cs->self_fd = a;
-    cs->send_data_bytes = tcp_send_connection_state;
+    cs->send_data_bytes = send_connection_state;
     cs->fid_to_fd = std::make_unique<std::map<int32_t, FDState *>>();
     cs->pfid_to_pid = std::make_unique<std::map<int32_t, int32_t>>();
 
@@ -931,6 +945,7 @@ static int signalfd_handler(int sfd, int epoll_evts, void *user_data) {
 }
 static int hvc_handler(int epoll_fd, int epoll_evts, void* user_data) {
  ConnectionState *conn_state = (ConnectionState *)user_data;
+  if ((epoll_evts & EPOLLOUT) && flush_connection(conn_state) < 0) return -1;
   uint8_t buf[255];
   bool is_connection_closed = false;
 
@@ -947,7 +962,7 @@ static int hvc_handler(int epoll_fd, int epoll_evts, void* user_data) {
         }
       }
       if (v > 0) {
-        conn_state->data_bytes.insert(conn_state->data_bytes.end(), buf,
+        conn_state->incoming_bytes.insert(conn_state->incoming_bytes.end(), buf,
                                       buf + v);
       }
       if (v == 0) {
@@ -1067,7 +1082,7 @@ int main(int argc, char **argv) {
   ConnectionState *cs = new ConnectionState();
     cs->data_bytes = std::vector<uint8_t>();
     cs->self_fd = hvcFd;
-    cs->send_data_bytes = hvc_send_state;
+    cs->send_data_bytes = send_connection_state;
     cs->fid_to_fd = std::make_unique<std::map<int32_t, FDState *>>();
     cs->pfid_to_pid = std::make_unique<std::map<int32_t, int32_t>>();
   

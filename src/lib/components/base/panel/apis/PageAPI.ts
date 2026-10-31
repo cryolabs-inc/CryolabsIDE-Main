@@ -1,3 +1,5 @@
+import { StdioTransport } from "$lib/base/lsp/StdioTransport";
+import { normalizeRootURI } from "$lib/base/resource/rootURI";
 import { CodemirrorInstanceCache } from "./CodemirrorInstanceCache";
 export { CodemirrorInstanceCache } from "./CodemirrorInstanceCache";
 import type { DialogManager, FilePickerOptions } from "$lib/base/dialog/DialogManager";
@@ -166,6 +168,7 @@ class LanguageClients {
         await this.registerConfig("c++", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
         await this.registerConfig("c", "/usr/bin/clangd", ["--query-driver=/usr/bin/*", "-j=2"]);
         await this.registerConfig("java", "/usr/local/bin/java-language-server");
+        await this.registerConfig("python", "/usr/bin/pylsp");
     }
     async registerConfig(lang_id: string, language_cmd: string, language_cmd_args: string[] = []) {
         this.lang_id_to_registration.set(lang_id, {
@@ -202,11 +205,6 @@ class LanguageClients {
             
             const s = await proc.streams();
             clearTimeout(clT);
-            const encoder = new TextEncoder();
-            const decoder = new TextDecoder();
-            const HEADER_DELIMITER = "\r\n\r\n";
-            const reader = s.stdout.getReader();
-            const writer = s.stdin.getWriter();
             const stderr_reader = s.stderr.pipeThrough(new TextDecoderStream()).getReader();
             (async()=>{
                 while (true) {
@@ -217,80 +215,8 @@ class LanguageClients {
                     console.error(res.value);
                 }
             })()
-            class CryolabsTransport implements codemirror_lsp.Transport {
-                private handlers = new Set<(value: string) => void>();
-                private buf = new Uint8Array(0);
-
-                constructor() {
-                    this.readLoop();
-                }
-
-                send(message: string): void {
-                    console.debug("[LSP] Sending message to server:", message);
-                    const body = encoder.encode(message);
-                    const header = encoder.encode(`Content-Length: ${body.byteLength}${HEADER_DELIMITER}`);
-                    const packet = new Uint8Array(header.byteLength + body.byteLength);
-                    packet.set(header, 0);
-                    packet.set(body, header.byteLength);
-
-                    writer.write(packet);
-                }
-
-                subscribe(handler: (value: string) => void): void {
-                    this.handlers.add(handler);
-                }
-
-                unsubscribe(handler: (value: string) => void): void {
-                    this.handlers.delete(handler);
-                }
-
-                private dispatch(message: string) {
-                    console.debug("[LSP] Dispatching response from server:", message);
-                    for (const handler of this.handlers) {
-                        handler(message);
-                    }
-                }
-
-                private parseMessages() {
-                    while (true) {
-                        const text = decoder.decode(this.buf, { stream: true });
-                        const delimIdx = text.indexOf(HEADER_DELIMITER);
-                        if (delimIdx === -1) break;
-
-                        const headerSection = text.substring(0, delimIdx);
-                        let contentLength = -1;
-                        for (const line of headerSection.split("\r\n")) {
-                            const match = line.match(/^Content-Length:\s*(\d+)$/i);
-                            if (match) {
-                                contentLength = parseInt(match[1], 10);
-                            }
-                        }
-                        if (contentLength < 0) break;
-
-                        const headerBytes = encoder.encode(headerSection + HEADER_DELIMITER).byteLength;
-                        const totalNeeded = headerBytes + contentLength;
-                        if (this.buf.byteLength < totalNeeded) break;
-
-                        const bodyBytes = this.buf.subarray(headerBytes, totalNeeded);
-                        this.dispatch(decoder.decode(bodyBytes));
-                        this.buf = this.buf.slice(totalNeeded);
-                    }
-                }
-
-                private async readLoop() {
-                    while (true) {
-                        const res = await reader.read();
-                        if (res.done) break;
-
-                        const old = this.buf;
-                        this.buf = new Uint8Array(old.byteLength + res.value.byteLength);
-                        this.buf.set(old, 0);
-                        this.buf.set(res.value, old.byteLength);
-                        this.parseMessages();
-                    }
-                }
-            }
-            const ct = new CryolabsTransport();
+            const ct = new StdioTransport(s.stdout, s.stdin);
+            void ct.done.catch(error => console.error("[LSP] Failed to read server responses", error));
             const page_api = this.page_api;
             const lsp_client = new codemirror_lsp.LSPClient({
                 rootUri: new URL("file://" + this.page_api.rootPath.replace(/^\/user(?=\/|$)/, "/root")).href,
@@ -321,7 +247,9 @@ export interface PageAPIDelegate {
 
 export class DefaultPageAPIDelegate implements PageAPIDelegate {
     openWithRootURI(path: string): void {
-        window.open(location.href + "?url='" + path + "'", "_blank");
+        const url = new URL(location.href);
+        url.searchParams.set("url", normalizeRootURI(path));
+        window.open(url.href, "_blank");
     }
 }
 export interface TerminalSettings {
